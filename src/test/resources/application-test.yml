@@ -1,0 +1,5 @@
+spring:
+  datasource:
+    url: jdbc:h2:mem:points-test-${random.uuid};MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE
+  jpa:
+    show-sql: false
