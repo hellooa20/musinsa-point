@@ -52,6 +52,8 @@ public interface PointLedgerRepository extends JpaRepository<PointLedger, Long> 
     List<PointLedger> findByReferencePointKeyAndPointType(
             String referencePointKey, PointType pointType);
 
+    boolean existsByReferencePointKeyAndPointType(String referencePointKey, PointType pointType);
+
     @Query("""
             select l from PointLedger l
              where l.customerId = :customerId
