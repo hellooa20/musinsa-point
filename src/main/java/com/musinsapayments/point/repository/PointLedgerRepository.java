@@ -4,6 +4,7 @@ import com.musinsapayments.point.domain.ledger.PointLedger;
 import com.musinsapayments.point.domain.ledger.PointType;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 import org.springframework.data.domain.Page;
@@ -20,6 +21,8 @@ public interface PointLedgerRepository extends JpaRepository<PointLedger, Long> 
     Optional<PointLedger> findByPointKeyAndCustomerId(String pointKey, long customerId);
 
     Optional<PointLedger> findByOrderNumber(String orderNumber);
+
+    List<PointLedger> findAllByPointKeyIn(Collection<String> pointKeys);
 
     @Query("""
             select coalesce(sum(l.remainingAmount), 0)
