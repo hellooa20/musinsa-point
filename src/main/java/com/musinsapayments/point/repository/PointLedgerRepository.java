@@ -58,6 +58,12 @@ public interface PointLedgerRepository extends JpaRepository<PointLedger, Long> 
     boolean existsByReferencePointKeyAndPointType(String referencePointKey, PointType pointType);
 
     @Query("""
+            select coalesce(sum(l.amount), 0) from PointLedger l
+             where l.referencePointKey = :referencePointKey and l.pointType = :pointType
+            """)
+    long sumAmountByReferencePointKeyAndPointType(String referencePointKey, PointType pointType);
+
+    @Query("""
             select l from PointLedger l
              where l.customerId = :customerId
                and not (l.pointType = com.musinsapayments.point.domain.ledger.PointType.ACCRUAL
