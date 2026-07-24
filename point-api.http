@@ -1,0 +1,140 @@
+### 무료 포인트 API 빠른 테스트
+# 위에서 아래 순서로 요청을 실행한다.
+# 같은 requestId를 사용하므로 같은 요청을 다시 실행해도 최초 결과가 재생된다.
+
+@baseUrl = http://localhost:8080
+@customerId = 100
+
+### 1. 고객 포인트 보유 한도 생성·변경
+PUT {{baseUrl}}/api/v1/point-policies/{{customerId}}
+Content-Type: application/json
+
+{
+  "holdingLimit": 100000
+}
+
+### 2. 취소 테스트용 일반 적립
+POST {{baseUrl}}/api/v1/points/accruals
+Content-Type: application/json
+
+{
+  "requestId": "00000000-0000-0000-0000-000000000001",
+  "customerId": {{customerId}},
+  "amount": 300,
+  "validityDays": 365
+}
+
+> {%
+    client.global.set("cancellableAccrualPointKey", response.body.pointKey);
+%}
+
+### 3. 적립취소
+POST {{baseUrl}}/api/v1/points/accruals/cancel
+Content-Type: application/json
+
+{
+  "requestId": "00000000-0000-0000-0000-000000000002",
+  "customerId": {{customerId}},
+  "accrualPointKey": "{{cancellableAccrualPointKey}}"
+}
+
+### 4. 관리자 수기 적립 1,000
+POST {{baseUrl}}/api/v1/admin/points/accruals
+Content-Type: application/json
+
+{
+  "requestId": "00000000-0000-0000-0000-000000000003",
+  "customerId": {{customerId}},
+  "amount": 1000,
+  "validityDays": 365
+}
+
+> {%
+    client.global.set("manualAccrualPointKey", response.body.pointKey);
+%}
+
+### 5. 일반 적립 500
+POST {{baseUrl}}/api/v1/points/accruals
+Content-Type: application/json
+
+{
+  "requestId": "00000000-0000-0000-0000-000000000004",
+  "customerId": {{customerId}},
+  "amount": 500,
+  "validityDays": 365
+}
+
+> {%
+    client.global.set("normalAccrualPointKey", response.body.pointKey);
+%}
+
+### 6. 현재 잔액 조회 - 예상 잔액 1,500
+GET {{baseUrl}}/api/v1/points/balance?customerId={{customerId}}
+
+### 7. 주문에 포인트 1,200 사용
+POST {{baseUrl}}/api/v1/points/uses
+Content-Type: application/json
+
+{
+  "requestId": "00000000-0000-0000-0000-000000000005",
+  "customerId": {{customerId}},
+  "orderNumber": "ORDER-HTTP-001",
+  "amount": 1200
+}
+
+> {%
+    client.global.set("usePointKey", response.body.pointKey);
+%}
+
+### 8. 사용 거래 1,100 부분 취소
+POST {{baseUrl}}/api/v1/points/uses/cancel
+Content-Type: application/json
+
+{
+  "requestId": "00000000-0000-0000-0000-000000000006",
+  "customerId": {{customerId}},
+  "usePointKey": "{{usePointKey}}",
+  "cancelOrderNumber": "ORDER-HTTP-001-CANCEL-1",
+  "amount": 1100
+}
+
+> {%
+    client.global.set("useCancellationPointKey", response.body.pointKey);
+%}
+
+### 9. 현재 잔액 조회 - 예상 잔액 1,400
+GET {{baseUrl}}/api/v1/points/balance?customerId={{customerId}}
+
+### 10. 전체 거래내역 조회
+GET {{baseUrl}}/api/v1/points/transactions?customerId={{customerId}}&page=0&size=20
+
+### 11. 사용 거래 상세 조회
+GET {{baseUrl}}/api/v1/points/transactions/{{usePointKey}}
+
+### 12. 사용취소 거래 상세 조회
+GET {{baseUrl}}/api/v1/points/transactions/{{useCancellationPointKey}}
+
+### 13. 수기 적립의 직접 사용·취소 이력 조회
+GET {{baseUrl}}/api/v1/points/accruals/{{manualAccrualPointKey}}/history
+
+### 14. 같은 requestId와 같은 입력 재요청 - 5번의 최초 응답 재생
+POST {{baseUrl}}/api/v1/points/accruals
+Content-Type: application/json
+
+{
+  "requestId": "00000000-0000-0000-0000-000000000004",
+  "customerId": {{customerId}},
+  "amount": 500,
+  "validityDays": 365
+}
+
+### 15. 잔액 부족 오류 확인 - 422 POINT_BALANCE_INSUFFICIENT
+POST {{baseUrl}}/api/v1/points/uses
+Content-Type: application/json
+
+{
+  "requestId": "00000000-0000-0000-0000-000000000007",
+  "customerId": {{customerId}},
+  "orderNumber": "ORDER-HTTP-ERROR",
+  "amount": 999999
+}
