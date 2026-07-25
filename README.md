@@ -1,172 +1,479 @@
 # 무신사 무료 포인트 시스템
 
-## 1. 프로젝트 개요
+## 프로젝트 개요
 
-이 프로젝트는 고객별 무료 포인트의 적립, 적립 취소, 사용, 사용 취소가 가능한 API를 구현하는 것을 목표로 합니다.
+고객별 무료 포인트의 일반 적립, 관리자 수기 적립, 적립 취소, 주문 사용, 전체·부분 사용 취소를 제공한다.<br/>
+통합 원장과 원장 상세로 사용 금액이 어느 적립에서 차감되고 어디로 복원되는지 1포인트 단위로 추적할 수 있다.
 
-단순히 현재 잔액만 관리하는 것이 아니라, 포인트가 어떤 적립 건에서 차감되었고 취소 시 어디로 복원되었는지까지 흐름을 추적할 수 있도록 설계합니다.
+## 목차
 
-## 2. 요구사항 정리
+- [기술 스택](#기술-스택)
+- [빌드와 실행](#빌드와-실행)
+- [핵심 정책](#핵심-정책)
+- [설계 및 정합성 보장](#설계-및-정합성-보장)
+  - [데이터 모델과 통합 원장](#데이터-모델과-통합-원장)
+  - [ERD](#erd)
+  - [동시성·멱등성·트랜잭션](#동시성멱등성트랜잭션)
+  - [포인트 차감·복원 시나리오](#포인트-차감복원-시나리오)
+  - [AWS-아키텍처](#AWS-아키텍처)
+- [API 명세](#api-명세)
+- [요청·응답 예시](#요청응답-예시)
+- [오류 처리](#오류-처리)
+- [테스트](#테스트)
+- [설계 고려사항 및 개선 방향](#설계-고려사항-및-개선-방향)
 
-### 요구 사항
+## 기술 스택
 
-- 포인트는 일반 적립과 관리자 수기 적립을 구분합니다.
-- 고객별 보유 한도와 1회 적립 한도를 적용합니다.
-- 포인트 적립, 적립 취소, 사용, 사용 취소 기능이 구현되어야 합니다.
-- 적립마다 유효기간이 있으며 만료된 포인트는 사용할 수 없습니다.
-- 포인트 사용 시 관리자 수기 적립을 우선하고, 같은 유형에서는 만료일이 빠른 적립을 우선합니다.
-- 사용 거래는 전체 또는 일부 금액을 취소할 수 있습니다.
-- 사용 취소 시 원적립이 만료되었다면 정해진 유효기간을 가진 신규 적립으로 복원합니다.
-- 사용 금액이 어느 적립에서 차감되었는지 금액 단위로 추적할 수 있어야 합니다.
-
-### 기능별 핵심 정책
-
-| 기능 | 핵심 규칙                                                     |
-|---|-----------------------------------------------------------|
-| 적립 | 금액과 유효기간을 검증하고, 1회 적립 한도 및 고객 보유 한도를 넘지 않아야 합니다.          |
-| 적립 취소 | 원적립을 식별해 전액 취소하며, 이미 취소되었거나 만료되었거나 사용 중인 적립은 취소할 수 없습니다.  |
-| 사용 | 사용 가능 잔액이 충분해야 하며, 정해진 우선순위에 따라 필요한 금액 전부를 사용합니다.         |
-| 사용 취소 | 원사용 금액을 초과해 취소할 수 없으며, 전체 또는 일부 금액을 원사용의 차감 내역에 따라 복원합니다. |
-
-### 거래 추적과 잔액 정합성
-
-- 적립, 적립 취소, 사용, 사용 취소는 각각 독립된 거래 이력으로 남겨야 합니다.
-- 거래 총액과 해당 거래의 상세 배분 금액 합계는 일치해야 합니다.
-- 사용 후 각 적립의 잔여 금액은 0 이상이어야 하며 최초 적립 금액을 초과할 수 없습니다.
-- 원장 생성, 상세 배분 생성, 적립 잔여 금액 변경은 하나의 트랜잭션에서 함께 성공하거나 함께 실패해야 합니다.
-- 중복 요청이나 동시 요청이 발생해도 이중 적립·이중 취소 또는 음수 잔액이 생기지 않아야 합니다.
-
-## 3. 정책 및 가정
-
-### 확정된 정책
-
-- 사용 순서는 관리자 수기 적립이 일반 적립보다 우선이며, 같은 유형에서는 만료일이 빠른 적립이 우선입니다.
-- 적립 취소는 부분 취소가 아니라 원적립 전체 취소이며, 사용되지 않았을 경우에만 취소가 가능합니다.
-- 사용 취소는 전체 취소와 부분 취소를 모두 지원합니다.
-- 원적립이 만료된 뒤 사용을 취소하면 기존 적립이 아닌 신규 적립으로 복원합니다.
-- 포인트 변경 이력과 실제 차감·복원 관계를 조회할 수 있어야 합니다.
-
-### 정책 결정이 필요한 사항
-
-1. 만료된 원적립을 복원할 때 생성되는 신규 적립의 유효기간
-2. 사용 취소로 잔액이 증가할 때도 고객 보유 한도를 적용할지 여부
-3. 만료 복원 적립에 1회 적립 한도를 적용할지 여부
-4. 거래의 멱등성 보장 여부
-5. 주문번호와 취소 주문번호의 유일성 범위
-6. 사용 취소의 포인트 복원 순서 
-7. 적립 취소 가능한 조건 
-8. 인증·인가 및 관리자 수기 적립 권한이 과제 구현 범위에 포함되는지 여부
-
-### 적용한 가정
-
-위 항목은 다음과 같이 가정하여 구현 방향을 정리했습니다.
-
-1. 원적립이 만료된 후 사용 취소할 경우 신규 적립 건의 만료일자는 7일로 설정 (길게 설정할 경우 악용할 여지가 존재)
-2. 사용 취소 시 고객 보유 한도를 넘을 경우 거래 실패 처리
-3. 만료 복원 적립은 1회 적립 한도를 미적용
-4. 모든 변경 요청은 요청 식별자를 받아 멱등성을 보장하며, 같은 식별자를 다른 내용으로 재사용하면 충돌로 처리
-5. 사용 및 사용 취소의 주문번호는 외부 거래 식별자로서 중복 허용하지 않음
-6. 사용 취소는 예시에 따라 원사용에서 먼저 차감된 적립부터 복원하는 FIFO 방식으로 처리 
-7. 적립 금액 전액이 잔액으로 남아 있고 만료되지 않은 경우에만 적립 취소가 가능하며 과거에 일부 사용되었더라도 사용 취소를 통해 전액이 복원된 경우에는 적립 취소 가능
-8. 인증, 인가 및 관리자 수기 적립 권한은 범위에서 제외
-
-- 
-## 4. 도메인 및 데이터 모델 초안
-
-거래 원장과 거래 상세는 분리
-
-원장은 거래 한 건의 공통 정보와 총액을 표현하고, 상세는 하나의 사용 거래가 여러 적립에 나뉘어 배분되는 관계를 표현
-
-취소 거래에는 원거래 식별자를 참조하는 값을 두고, 사용·사용 취소 상세에는 차감 원천과 복원 대상을 연결할 수 있는 참조를 둘 예정
-
-이를 통해 원사용의 일부만 취소하거나 만료로 인해 신규 적립으로 복원되는 경우에도 흐름 추적 가능
-
-주문번호와 취소 주문번호 같은 외부 거래 식별자는 포인트 거래와 외부 주문 거래를 연결하고, 재시도나 중복 호출을 판별하는 근거로 저장
-
-## 5. 주요 설계 방향
-
-### 적립별 잔여 금액
-
-각 적립 단위가 최초 금액과 현재 잔여 금액을 가지는 방식을 우선 검토합니다. 사용 가능 여부와 적립 취소 가능 여부를 적립별로 판단할 수 있고, 사용 취소 시 원래 적립으로 정확히 복원하기 쉽기 때문입니다.
-
-### 사용 차감 순서
-
-확정된 우선순위인 `관리자 수기 적립 우선 → 만료일이 빠른 순`을 적용합니다. 동률일 때의 정렬 기준은 결과를 항상 동일하게 만들 수 있도록 적립 시각과 내부 식별자 순으로 정렬합니다.
-
-### 사용 거래와 실제 적립 차감의 관계
-
-사용 거래 한 건과 차감된 적립 여러 건의 관계를 거래 상세에 저장합니다. 상세 금액의 합은 사용 거래 총액과 같아야 하며, 이 관계를 사용 취소 계산의 기준으로 사용합니다.
-
-### 사용 취소 추적
-
-사용 취소는 현재 잔액만 증가시키지 않고 원사용의 상세 배분을 조회해 복원 대상을 결정합니다. 원적립이 유효하면 해당 적립의 잔여 금액을 복원하고, 만료되었다면 신규 적립을 생성한 뒤 원적립·사용 취소·신규 적립 사이의 관계를 남기는 방향을 검토합니다.
-
-### 회원별 잔액 관리
-
-별도의 잔액 값을 중복 저장하지 않고 유효한 적립별 잔여 금액 합계로 조회하는 방식을 우선 검토합니다. 정합성 기준이 하나라는 장점이 있지만 적립 건수가 많아지면 조회 비용이 증가할 수 있습니다. 따라서 별도 잔액 테이블이나 스냅샷은 초기부터 도입하지 않고, 구현 및 성능 검토 후 필요성을 다시 판단합니다.
-
-### 트랜잭션과 정합성
-
-적립, 적립 취소, 사용, 사용 취소를 각각 하나의 트랜잭션 경계로 처리할 예정입니다. 거래 원장, 거래 상세, 적립별 잔여 금액 중 일부만 반영되는 상태를 허용하지 않는 것이 목적입니다. 데이터베이스의 유일성·참조·금액 제약도 애플리케이션 검증을 보완하는 수단으로 검토합니다.
-
-### 동일 회원 동시 요청
-
-동일 고객의 포인트 변경을 직렬화할 수 있는 고객 단위 잠금 기준을 두는 방향을 우선 검토합니다. 구현 후보는 고객 정책 행에 대한 비관적 잠금입니다. 다른 고객의 요청까지 막지 않으면서 같은 고객의 잔액 검증과 변경 순서를 단순하게 보장할 수 있기 때문입니다. 구체적인 잠금 방식과 타임아웃 정책은 동시성 테스트 후 확정합니다.
-
-### 중복 요청과 중복 취소
-
-변경 요청 식별자와 외부 주문 식별자에 유일성 제약을 두고, 트랜잭션 안에서 기존 처리 여부를 다시 확인하는 방식을 검토합니다. 동일 식별자와 동일한 요청은 최초 처리 결과를 반환하고, 다른 요청 내용에 같은 식별자를 사용한 경우에는 충돌로 처리하는 방향입니다. 취소 가능 금액과 원거래 참조도 함께 검사해 중복 취소를 방지합니다.
-
-## 6. API 상세
-
-| 기능 | Method | URI 후보 |
-|---|---|---|
-| 고객 포인트 정책 생성·변경 | `PUT` | `/api/v1/point-policies/{customerId}` |
-| 일반 적립 | `POST` | `/api/v1/points/accruals` |
-| 관리자 수기 적립 | `POST` | `/api/v1/admin/points/accruals` |
-| 적립 취소 | `POST` | `/api/v1/points/accruals/cancel` |
-| 포인트 사용 | `POST` | `/api/v1/points/uses` |
-| 포인트 사용 취소 | `POST` | `/api/v1/points/uses/cancel` |
-| 현재 잔액 조회 | `GET` | `/api/v1/points/balance` |
-| 고객 거래 이력 조회 | `GET` | `/api/v1/points/transactions` |
-| 거래 상세 조회 | `GET` | `/api/v1/points/transactions/{pointKey}` |
-| 특정 적립 관련 이력 조회 | `GET` | `/api/v1/points/accruals/{pointKey}/history` |
-
-변경 요청에는 고객 식별자, 요청 식별자, 금액과 기능별 원거래·주문 식별자가 포함
-
-변경 응답에는 거래 식별자, 거래 종류, 금액, 처리 직후 잔액과 발생 시각을 포함
-
-상세 필드, HTTP 상태 코드, 오류 응답 형식은 구현 후 실제 명세로 갱신
-
-## 7. 기술 스택
-
-| 구분 | 확인된 내용 |
-|---|---|
+| 항목 | 구성 |
+| --- | --- |
 | Language | Java 21 |
 | Framework | Spring Boot 3.5.16 |
 | Persistence | Spring Data JPA |
-| Database | H2 Database |
+| Database | H2 in-memory, PostgreSQL 호환 모드 |
 | API 문서 | springdoc-openapi 2.8.17 |
-| Test | Spring Boot Test, JUnit Platform |
 
-## 8. 실행 및 테스트
-
-현재 빌드 설정은 Java 21을 전제로 합니다. Gradle Wrapper를 사용한 기본 명령은 다음과 같습니다.
+## 빌드와 실행
 
 ```bash
-./gradlew test
+./gradlew clean test
 ./gradlew bootRun
 ```
 
-현재 애플리케이션은 H2 인메모리 데이터베이스를 사용하도록 설정되어 있어 재실행하면 데이터가 유지되지 않습니다.
-
 - Swagger UI: <http://localhost:8080/swagger-ui/index.html>
 - OpenAPI JSON: <http://localhost:8080/v3/api-docs>
+- H2 Console: <http://localhost:8080/h2-console>
+  - JDBC URL: `jdbc:h2:mem:points`
+  - 사용자: `sa`
+  - H2는 인메모리 DB이므로 애플리케이션 재기동 시 데이터가 초기화됨
+
+## 핵심 정책
+
+> 과제 요구사항에서 상세 기준이 정해지지 않은 항목은 일관된 구현을 위해 별도의 기준을 정해 적용했다.
+
+| 기능        | 정책                                                                                                                             |
+|-----------|--------------------------------------------------------------------------------------------------------------------------------|
+| 적립        | 1회 적립 한도와 고객 보유 한도 체크<br/>일반 적립과 관리자 수기 적립을 구분<br/>만료일은 최소 1일 이상 최대 5년 미만이며 유효기간 생략 시 365일 적용                                  |
+| 적립 만료 판정  | `now >= expiresAt`부터 만료로 판정                                                                                                    |
+| 적립 취소     | 부분 취소를 지원하지 않음<br/>원적립 전액이 남아 있고 만료되지 않았을 때만 취소 가능<br/>이전에 사용되었더라도 사용 취소로 전액 복원된 경우에는 취소 가능                                    |
+| 사용        | 수기 적립 → 만료일 오름차순 → 적립 시각 오름차순 → `id`(PK) 오름차순으로 차감                                                                             |
+| 사용 취소     | 전체·부분 취소를 지원<br/>원사용 상세에서 먼저 차감된 포인트부터 FIFO 방식으로 복원<br/>누적 취소액은 원사용 금액을 넘을 수 없음<br/>`사용 취소 금액 + 현재 잔액 > 고객 보유 한도`인 경우 요청 실패 처리 |
+| 만료 포인트 복원 | 원적립이 만료된 경우 유효기간 7일의 신규 적립을 생성<br/>해당 재적립에는 1회 적립 한도를 적용하지 않음                                                                  |
+| 중복 요청 방지  | 모든 포인트 변경 요청은 `requestId`로 중복 처리를 방지<br/>동일한 `requestId`에 다른 정보를 보내면 충돌로 처리                                                    |
+| 주문번호      | 사용 주문번호와 취소 주문번호는 외부 거래 식별자로 사용하며 중복을 허용하지 않음                                                                                  |
+| 구현 범위     | 인증·인가와 관리자 수기 적립 권한 검증은 과제 구현 범위에서 제외                                                                                          |
 
 
-## 9. 추후 개선 필요 사항
 
-- 소멸 포인트의 경우 배치 처리 필요
-- 인증, 인가
-- 대용량 데이터 처리
-- 고객 총 잔액 조회 개선 필요
+## 설계 및 정합성 보장
+
+### 데이터 모델
+
+#### ERD
+
+![point-erd.png](src/main/resources/docs/point-erd.png)
+
+#### 테이블 구성
+
+| 테이블                     | 역할                                                                      |
+| ----------------------- |-------------------------------------------------------------------------|
+| `customer_point_policy` | 고객별 포인트 보유 한도를 관리                                                       |
+| `point_ledger`          | 적립, 적립 취소, 사용, 사용 취소 내역을 저장하는 통합 원장<br/> 적립 원장은 실제로 사용할 수 있는 포인트 단위     |
+| `point_ledger_detail`   | 모든 원장에 최소 1건 이상 생성<br/>포인트 사용 및 사용 취소 시 어떤 적립 건에서 얼마가 차감되거나 복원되었는지 저장 |
+
+#### 통합 원장
+
+- 모든 포인트 거래를 `point_ledger`에서 관리한다.
+- 적립, 적립취소, 사용, 사용취소 내역을 하나의 원장에서 조회하고 거래 간 관계를 추적할 수 있다.
+
+#### 금액 관리
+
+- `amount`: 거래가 발생했을 때의 금액으로, 생성 이후 변경하지 않는다.
+- `remainingAmount`: 적립 원장에서 현재 사용할 수 있는 잔여 금액을 관리한다.
+- `balanceAfter`: 해당 거래가 완료된 직후의 고객 포인트 잔액을 저장한다.
+
+#### 엔티티 관계
+
+- JPA 엔티티 간 객체 연관관계는 사용하지 않고 관련 원장의 `pointKey`와 같은 식별자 값을 직접 저장한다.
+- 연관관계 로딩과 영속성 전파를 단순화하고, 필요한 데이터는 명시적으로 조회한다. 
+- 데이터 간 참조 무결성은 데이터베이스의 외래 키 제약조건으로 보장한다.
+
+### 동시성
+- 같은 고객의 변경은 `PESSIMISTIC_WRITE` 비관적 락을 사용해 하나씩 처리한다.
+- 다른 고객의 요청은 서로 막지 않는다. 
+- 같은 고객 요청이 몰리면 대기 시간이 길어질 수 있으므로 운영에서는 락 대기 시간과 503 오류를 관찰하고 타임아웃을 조정한다.
+
+### 멱등성
+- `requestId`는 락 획득 전과 후에 검사한다.
+- 재요청 시 `balanceAfter`는 최초 처리 값(스냅샷)을 그대로 반환한다.
+
+### 트랜잭션
+- 원장 생성, 원장 상세 생성, 적립 잔여 금액 변경, 만료 복원 적립 생성은 하나의 트랜잭션으로 처리한다. 
+- 하나라도 실패하면 전체 롤백한다.
+
+### 정합성
+- 현재 잔액은 미만료 적립의 `remainingAmount` 합계로 실시간 계산한다. 
+- 별도 잔액을 저장하지 않아 쓰기 정합성을 단순화한다.
+
+### 포인트 차감·복원 시나리오
+
+> 포인트 적립부터 사용 및 사용 취소까지의 흐름을 나타낸 시나리오이며, 사용 취소 시 원적립이 만료된 경우도 포함합니다.<br/>
+> 상세 source → target은 원장 상세에 저장되는 포인트의 차감·복원 관계를 의미합니다.
+
+| 원장 | 종류     |   금액 | 상세 source → target                      | 결과                  |
+|----|--------|-----:|-----------------------------------------|---------------------|
+| A  | 수기 적립  | 1000 | A → A                                   | 잔액 1000             |
+| B  | 일반 적립  |  500 | B → B                                   | 잔액 1500             |
+| C  | 사용     | 1200 | A → null (1000)<br/>B → null (200)      | 잔액 300              |
+| D  | 사용 취소  | 1100 | A → E (1000) - A 만료 케이스<br/>B → B (100) | 잔액 1400             |
+| E  | 만료 재적립 | 1000 | E → E                                   | D 상세에 포함, 최상위 목록 제외 |
+
+### AWS 아키텍처
+
+
+## API 명세
+
+| 기능            | Method | URL                                          | 예시                                |
+|---------------|--------|----------------------------------------------|-----------------------------------|
+| 고객 한도 생성·변경   | `PUT`  | `/api/v1/point-policies/{customerId}`        | [보기](#example-policy)             |
+| 일반 적립         | `POST` | `/api/v1/points/accruals`                    | [보기](#example-accrual)            |
+| 관리자 수기 적립     | `POST` | `/api/v1/admin/points/accruals`              | [보기](#example-accrual)            |
+| 적립 취소         | `POST` | `/api/v1/points/accruals/cancel`             | [보기](#example-accrual-cancel)     |
+| 주문 사용         | `POST` | `/api/v1/points/uses`                        | [보기](#example-use)                |
+| 사용 취소         | `POST` | `/api/v1/points/uses/cancel`                 | [보기](#example-use-cancel)         |
+| 현재 잔액         | `GET`  | `/api/v1/points/balance`                     | [보기](#example-balance)            |
+| 거래 내역         | `GET`  | `/api/v1/points/transactions`                | [보기](#example-transactions)       |
+| 원장 상세         | `GET`  | `/api/v1/points/transactions/{pointKey}`     | [보기](#example-transaction-detail) |
+| 적립 건 사용·복원 이력 | `GET`  | `/api/v1/points/accruals/{pointKey}/history` | [보기](#example-accrual-history)    |
+
+- `fromDate`, `toDate`는 `yyyyMMdd` 형식이다.
+- 거래 내역 조회의 기본값은 `page=0`, `size=20`이며, `size`는 1~100 범위다.
+- 일반·수기 적립의 `validityDays`는 선택 필드다. 생략 시 365일을 적용하며, 1일 이상 5년 미만이어야 한다.
+
+> 각 API는 [point-api.http](point-api.http) 파일을 통해 테스트할 수 있습니다.
+
+## 요청·응답 예시
+
+API 표의 `보기` 링크로 필요한 예시만 펼쳐볼 수 있다. 모든 변경 API의 성공 상태는 `200 OK`다.
+각 예시는 요청·응답 형식을 보여주기 위한 독립된 예시이며, 필요한 고객 정책과 포인트 원장은 미리 준비된 것으로 가정한다.
+
+<a id="example-policy"></a>
+<details>
+<summary><strong>고객 한도 생성·변경</strong></summary>
+
+```http
+PUT /api/v1/point-policies/100
+Content-Type: application/json
+
+{ "holdingLimit": 100000 }
+```
+
+```json
+{ "customerId": 100, "holdingLimit": 100000 }
+```
+</details>
+
+<a id="example-accrual"></a>
+<details>
+<summary><strong>일반·관리자 수기 적립</strong></summary>
+
+일반 적립은 `/api/v1/points/accruals`, 관리자 수기 적립은 `/api/v1/admin/points/accruals`를 사용한다. 요청과 응답 형식은 같다.
+
+```http
+POST /api/v1/points/accruals
+Content-Type: application/json
+
+{
+  "requestId": "11111111-1111-1111-1111-111111111111",
+  "customerId": 100,
+  "amount": 1000,
+  "validityDays": 365
+}
+```
+
+```json
+{
+  "pointKey": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+  "customerId": 100,
+  "pointType": "ACCRUAL",
+  "referencePointKey": null,
+  "orderNumber": null,
+  "amount": 1000,
+  "balanceAfter": 1000,
+  "occurredAt": "2026-07-22T10:00:00+09:00",
+  "transactionDate": "20260722",
+  "expiresAt": "2027-07-22T10:00:00+09:00"
+}
+```
+</details>
+
+<a id="example-accrual-cancel"></a>
+<details>
+<summary><strong>적립 취소</strong></summary>
+
+```http
+POST /api/v1/points/accruals/cancel
+Content-Type: application/json
+
+{
+  "requestId": "22222222-2222-2222-2222-222222222222",
+  "customerId": 100,
+  "accrualPointKey": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+}
+```
+
+```json
+{
+  "pointKey": "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+  "customerId": 100,
+  "pointType": "ACCRUAL_CANCEL",
+  "referencePointKey": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+  "orderNumber": null,
+  "amount": 1000,
+  "balanceAfter": 0,
+  "occurredAt": "2026-07-22T10:10:00+09:00",
+  "transactionDate": "20260722",
+  "expiresAt": null
+}
+```
+</details>
+
+<a id="example-use"></a>
+<details>
+<summary><strong>주문 사용</strong></summary>
+
+```http
+POST /api/v1/points/uses
+Content-Type: application/json
+
+{
+  "requestId": "33333333-3333-3333-3333-333333333333",
+  "customerId": 100,
+  "orderNumber": "ORDER-A1234",
+  "amount": 1200
+}
+```
+
+```json
+{
+  "pointKey": "cccccccc-cccc-cccc-cccc-cccccccccccc",
+  "customerId": 100,
+  "pointType": "USE",
+  "referencePointKey": null,
+  "orderNumber": "ORDER-A1234",
+  "amount": 1200,
+  "balanceAfter": 300,
+  "occurredAt": "2026-07-22T10:20:00+09:00",
+  "transactionDate": "20260722",
+  "expiresAt": null
+}
+```
+</details>
+
+<a id="example-use-cancel"></a>
+<details>
+<summary><strong>사용 취소</strong></summary>
+
+```http
+POST /api/v1/points/uses/cancel
+Content-Type: application/json
+
+{
+  "requestId": "44444444-4444-4444-4444-444444444444",
+  "customerId": 100,
+  "usePointKey": "cccccccc-cccc-cccc-cccc-cccccccccccc",
+  "cancelOrderNumber": "ORDER-A1234-CANCEL-1",
+  "amount": 1100
+}
+```
+
+```json
+{
+  "pointKey": "dddddddd-dddd-dddd-dddd-dddddddddddd",
+  "customerId": 100,
+  "pointType": "USE_CANCEL",
+  "referencePointKey": "cccccccc-cccc-cccc-cccc-cccccccccccc",
+  "orderNumber": "ORDER-A1234-CANCEL-1",
+  "amount": 1100,
+  "balanceAfter": 1400,
+  "occurredAt": "2026-07-23T10:20:00+09:00",
+  "transactionDate": "20260723",
+  "expiresAt": null
+}
+```
+</details>
+
+<a id="example-balance"></a>
+<details>
+<summary><strong>현재 잔액 조회</strong></summary>
+
+```http
+GET /api/v1/points/balance?customerId=100
+```
+
+```json
+{
+  "customerId": 100,
+  "balance": 1400,
+  "calculatedAt": "2026-07-23T10:30:00+09:00"
+}
+```
+</details>
+
+<a id="example-transactions"></a>
+<details>
+<summary><strong>거래내역 조회</strong></summary>
+
+```http
+GET /api/v1/points/transactions?customerId=100&pointType=ACCRUAL&page=0&size=1
+```
+
+```json
+{
+  "content": [
+    {
+      "pointKey": "ffffffff-ffff-ffff-ffff-ffffffffffff",
+      "customerId": 100,
+      "pointType": "ACCRUAL",
+      "transactionType": "NORMAL",
+      "amount": 500,
+      "remainingAmount": 400,
+      "balanceAfter": 1500,
+      "status": "PARTIALLY_AVAILABLE",
+      "expiresAt": "2027-07-22T10:05:00+09:00",
+      "occurredAt": "2026-07-22T10:05:00+09:00",
+      "transactionDate": "20260722"
+    }
+  ],
+  "page": 0,
+  "size": 1,
+  "totalElements": 2,
+  "totalPages": 2
+}
+```
+</details>
+
+<a id="example-transaction-detail"></a>
+<details>
+<summary><strong>원장 상세 조회</strong></summary>
+
+아래의 `ffffffff-...` 적립은 대표 시나리오의 일반 적립 B를 뜻한다.
+
+```http
+GET /api/v1/points/transactions/dddddddd-dddd-dddd-dddd-dddddddddddd
+```
+
+```json
+{
+  "pointKey": "dddddddd-dddd-dddd-dddd-dddddddddddd",
+  "customerId": 100,
+  "pointType": "USE_CANCEL",
+  "referencePointKey": "cccccccc-cccc-cccc-cccc-cccccccccccc",
+  "orderNumber": "ORDER-A1234-CANCEL-1",
+  "amount": 1100,
+  "balanceAfter": 1400,
+  "status": "USE_CANCEL",
+  "occurredAt": "2026-07-23T10:20:00+09:00",
+  "transactionDate": "20260723",
+  "details": [
+    {
+      "sourceAccrualPointKey": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+      "targetAccrualPointKey": "eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee",
+      "amount": 1000,
+      "sequenceNo": 1
+    },
+    {
+      "sourceAccrualPointKey": "ffffffff-ffff-ffff-ffff-ffffffffffff",
+      "targetAccrualPointKey": "ffffffff-ffff-ffff-ffff-ffffffffffff",
+      "amount": 100,
+      "sequenceNo": 2
+    }
+  ]
+}
+```
+</details>
+
+<a id="example-accrual-history"></a>
+<details>
+<summary><strong>적립 건 사용·복원 이력 조회</strong></summary>
+
+```http
+GET /api/v1/points/accruals/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa/history
+```
+
+```json
+{
+  "accrualPointKey": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+  "transactions": [
+    {
+      "pointKey": "cccccccc-cccc-cccc-cccc-cccccccccccc",
+      "customerId": 100,
+      "pointType": "USE",
+      "orderNumber": "ORDER-A1234",
+      "amount": 1200,
+      "balanceAfter": 300,
+      "status": "PARTIALLY_CANCELED",
+      "occurredAt": "2026-07-22T10:20:00+09:00",
+      "transactionDate": "20260722"
+    },
+    {
+      "pointKey": "dddddddd-dddd-dddd-dddd-dddddddddddd",
+      "customerId": 100,
+      "pointType": "USE_CANCEL",
+      "referencePointKey": "cccccccc-cccc-cccc-cccc-cccccccccccc",
+      "orderNumber": "ORDER-A1234-CANCEL-1",
+      "amount": 1100,
+      "balanceAfter": 1400,
+      "status": "USE_CANCEL",
+      "occurredAt": "2026-07-23T10:20:00+09:00",
+      "transactionDate": "20260723"
+    }
+  ]
+}
+```
+</details>
+
+## 오류 처리
+
+공통 오류 응답은 `timestamp`, `code`, `message`, `fieldErrors`로 구성한다.
+
+```json
+{
+  "timestamp": "2026-07-22T10:00:00+09:00",
+  "code": "POINT_BALANCE_INSUFFICIENT",
+  "message": "사용 가능한 포인트가 부족합니다.",
+  "fieldErrors": []
+}
+```
+
+| HTTP | 코드                                                                                                         | 대표 원인                              |
+|------|------------------------------------------------------------------------------------------------------------|------------------------------------|
+| 400  | `INVALID_REQUEST`                                                                                          | Bean Validation 실패<br/> UUID·날짜·쿼리 형식 오류 |
+| 404  | `POLICY_NOT_FOUND`, `POINT_NOT_FOUND`                                                                      | 고객 정책 또는 원장 미존재                    |
+| 409  | `REQUEST_ID_CONFLICT`, `ORDER_NUMBER_CONFLICT`, `ACCRUAL_CANCEL_NOT_ALLOWED`, `USE_CANCEL_AMOUNT_EXCEEDED` | 중복 식별자<br/> 허용되지 않은 취소<br/> 취소 가능액 초과       |
+| 422  | `ACCRUAL_AMOUNT_LIMIT_EXCEEDED`, `HOLDING_LIMIT_EXCEEDED`, `POINT_BALANCE_INSUFFICIENT`                    | 적립·보유 한도 또는 사용 가능 잔액 위반            |
+| 503  | `LOCK_TIMEOUT`                                                                                             | 고객 정책 락 획득 실패                      |
+| 500  | `DATA_INTEGRITY_VIOLATION`, `INTERNAL_ERROR`                                                               | DB 제약 또는 예기치 않은 오류                 |
+
+## 테스트
+
+`./gradlew clean test`는 다음 범주의 검증을 실행한다.
+
+- 도메인: 금액 불변식, 적립 상태, 사용·사용 취소 배분 순서
+- 리포지토리: 스키마 제약, FK, UNIQUE, 조회 정렬
+- Web MVC: URL, 요청 검증, 성공 응답과 공통 오류 응답
+- 프로세스: 적립부터 사용 취소와 만료 재적립까지의 흐름
+- 멱등성: 네 가지 변경 기능의 최초 결과 재생과 충돌 입력
+- 롤백: 상세·원장·잔여 금액·복원 적립의 원자성
+- 동시성: 동시 사용, 동일 `requestId`, 사용 대 적립 취소를 임의의 `sleep` 없이 반복 검증
+
+> 과제에서 제공한 예시 시나리오를 기준으로 포인트 적립, 사용, 부분 사용 취소 및 만료 포인트 재적립 흐름을 [point-assignment-example.http](point-assignment-example.http)에 정리했습니다.
+> <br/>애플리케이션 실행 후 해당 파일의 요청을 위에서부터 순서대로 실행하면 전체 흐름을 확인할 수 있습니다.
+
+## 설계 고려사항 및 개선 방향
+
+- FIFO 사용 취소는 과제 예시 재현을 우선한 결정이다. 고객 우선 정책인 LIFO는 별도 요구사항이 있을 때 검토 대상이다.
+- 만료 스케줄러와 만료 원장은 구현하지 않는다. 조회 시각 기준으로 만료를 판정한다. 추후 고객 노출용 명시적 만료 이력이 필요하면 만료 스케줄러를 추가한다.
+- 현재는 H2를 사용하므로 테이블 파티셔닝을 적용하지 않는다. 운영 환경에서 거래 데이터가 많아질 경우 월 단위 파티셔닝을 검토한다. 파티셔닝 적용 시 거래 식별자의 유일성 보장 방식도 함께 검토해야 한다.
+- 현재 잔액은 별도로 저장하지 않고, 사용할 수 있는 적립 포인트의 잔여 금액을 합산하여 조회한다. 구조는 단순하지만 데이터가 많아지면 잔액 조회가 느려질 수 있으므로, 트래픽이 증가하면 고객별 잔액 테이블을 별도로 관리하는 방식을 검토한다.
+- 현재는 사용 가능한 적립 원장을 순서대로 조회한 뒤, 각 적립 건의 잔액을 차감하거나 복원하고 원장 상세를 생성한다. 한 고객이 보유한 적립 원장이 많으면 처리해야 하는 데이터와 쿼리 실행 횟수가 증가해 사용 및 사용 취소가 느려질 수 있다. 운영 데이터가 증가하면 쿼리에서 차감·복원 대상과 금액을 계산하고, 일괄 업데이트와 배치 INSERT를 적용해 데이터베이스 접근 횟수를 줄이는 방식을 검토한다.
+- 인증과 권한 관리는 과제 구현 범위에서 제외한다. 운영 환경에서는 로그인한 고객이 자신의 포인트만 조회·변경할 수 있도록 검증하고, 관리자 수기 적립 API에는 관리자 권한을 적용해야 한다.
