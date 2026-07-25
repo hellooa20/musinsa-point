@@ -402,30 +402,46 @@ GET /api/v1/points/accruals/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa/history
 
 ```json
 {
-  "accrualPointKey": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+  "accrualPointKey": "1781aa55-c3d0-484b-a31c-c83c59e05880",
   "transactions": [
     {
-      "pointKey": "cccccccc-cccc-cccc-cccc-cccccccccccc",
-      "customerId": 100,
-      "pointType": "USE",
-      "orderNumber": "ORDER-A1234",
-      "amount": 1200,
-      "balanceAfter": 300,
-      "status": "PARTIALLY_CANCELED",
-      "occurredAt": "2026-07-22T10:20:00+09:00",
-      "transactionDate": "20260722"
+      "pointKey": "1781aa55-c3d0-484b-a31c-c83c59e05880",
+      "customerId": 200,
+      "pointType": "ACCRUAL",
+      "transactionType": "MANUAL",
+      "amount": 1000,
+      "allocatedAmount": 1000,
+      "remainingAmount": 0,
+      "balanceAfter": 1000,
+      "status": "EXPIRED",
+      "expiresAt": "2026-07-25T17:30:09.406029+09:00",
+      "occurredAt": "2026-07-25T17:22:34.037457+09:00",
+      "transactionDate": "20260725"
     },
     {
-      "pointKey": "dddddddd-dddd-dddd-dddd-dddddddddddd",
-      "customerId": 100,
+      "pointKey": "99bc3652-01a0-4fc8-b6eb-e4e84f43f1ac",
+      "customerId": 200,
+      "pointType": "USE",
+      "orderNumber": "ORDER-ASSIGNMENT-001",
+      "amount": 1200,
+      "allocatedAmount": 1000,
+      "balanceAfter": 300,
+      "status": "PARTIALLY_CANCELED",
+      "occurredAt": "2026-07-25T17:23:33.617414+09:00",
+      "transactionDate": "20260725"
+    },
+    {
+      "pointKey": "5d0aef7e-ef96-4b83-b564-4311db7559cb",
+      "customerId": 200,
       "pointType": "USE_CANCEL",
-      "referencePointKey": "cccccccc-cccc-cccc-cccc-cccccccccccc",
-      "orderNumber": "ORDER-A1234-CANCEL-1",
+      "referencePointKey": "99bc3652-01a0-4fc8-b6eb-e4e84f43f1ac",
+      "orderNumber": "ORDER-ASSIGNMENT-001-CANCEL-1",
       "amount": 1100,
+      "allocatedAmount": 1000,
       "balanceAfter": 1400,
       "status": "USE_CANCEL",
-      "occurredAt": "2026-07-23T10:20:00+09:00",
-      "transactionDate": "20260723"
+      "occurredAt": "2026-07-25T17:25:32.315974+09:00",
+      "transactionDate": "20260725"
     }
   ]
 }
