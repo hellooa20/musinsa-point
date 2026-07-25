@@ -2,6 +2,8 @@ package com.musinsapayments.point.application;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.musinsapayments.point.application.query.AccrualHistoryResult;
+import com.musinsapayments.point.application.query.AccrualHistoryTransactionResult;
 import com.musinsapayments.point.application.query.PageResult;
 import com.musinsapayments.point.application.query.TransactionDetailResult;
 import com.musinsapayments.point.application.query.TransactionSearchCondition;
@@ -90,6 +92,34 @@ class PointQueryIntegrationTest {
 
         assertThat(second.getId()).isGreaterThan(first.getId());
         assertThat(result.content()).extracting(TransactionSummaryResult::pointKey).containsExactly("D", "C");
+    }
+
+    @Test
+    void 적립이력은_전체_거래금액과_해당_적립의_배분금액을_함께_반환한다() {
+        OffsetDateTime now = now();
+        createPolicy(now);
+        saveAccrual("A", 1_000L, now.minusDays(2));
+        saveAccrual("B", 500L, now.minusDays(2));
+        saveUse("C", 1_200L, now.minusDays(1));
+        saveUseCancellation("D", "C", 1_100L, now);
+        details.saveAndFlush(PointLedgerDetail.create("A", "A", "A", 1_000L, 1, now.minusDays(2)));
+        details.saveAndFlush(PointLedgerDetail.create("B", "B", "B", 500L, 1, now.minusDays(2)));
+        details.saveAndFlush(PointLedgerDetail.create("C", "A", null, 1_000L, 1, now.minusDays(1)));
+        details.saveAndFlush(PointLedgerDetail.create("C", "B", null, 200L, 2, now.minusDays(1)));
+        details.saveAndFlush(PointLedgerDetail.create("D", "A", "A", 900L, 1, now));
+        details.saveAndFlush(PointLedgerDetail.create("D", "B", "B", 200L, 2, now));
+
+        AccrualHistoryResult result = service.accrualHistory("A");
+
+        assertThat(result.transactions()).extracting(item -> item.transaction().pointKey())
+                .containsExactly("A", "C", "D");
+        assertThat(result.transactions()).extracting(
+                item -> item.transaction().amount(),
+                AccrualHistoryTransactionResult::allocatedAmount)
+                .containsExactly(
+                        org.assertj.core.groups.Tuple.tuple(1_000L, 1_000L),
+                        org.assertj.core.groups.Tuple.tuple(1_200L, 1_000L),
+                        org.assertj.core.groups.Tuple.tuple(1_100L, 900L));
     }
 
     private void createPolicy(OffsetDateTime now) {

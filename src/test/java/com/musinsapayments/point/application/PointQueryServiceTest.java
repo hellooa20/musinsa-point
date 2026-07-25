@@ -8,6 +8,7 @@ import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.BDDMockito.given;
 
 import com.musinsapayments.point.application.query.AccrualHistoryResult;
+import com.musinsapayments.point.application.query.AccrualHistoryTransactionResult;
 import com.musinsapayments.point.application.query.PageResult;
 import com.musinsapayments.point.application.query.PointBalanceResult;
 import com.musinsapayments.point.application.query.TransactionDetailResult;
@@ -122,16 +123,16 @@ class PointQueryServiceTest {
                 "A", AccrualTransactionType.NORMAL, 1_000L, 0L, NOW.plusDays(1));
         PointLedger ledgerC = PointLedger.createUse(
                 CUSTOMER_ID, "C", PointTestFixture.uuid(3).toString(), "ORDER-1",
-                1_000L, 0L, NOW.plusMinutes(1), NOW.toLocalDate());
+                1_200L, 0L, NOW.plusMinutes(1), NOW.toLocalDate());
         PointLedger ledgerD = PointLedger.createUseCancellation(
                 CUSTOMER_ID, "D", PointTestFixture.uuid(4).toString(), "C", "ORDER-1-CANCEL",
-                1_000L, 1_000L, NOW.plusMinutes(2), NOW.toLocalDate());
+                1_100L, 1_000L, NOW.plusMinutes(2), NOW.toLocalDate());
         given(ledgers.findByPointKey("A")).willReturn(Optional.of(ledgerA));
         given(details.findBySourceAccrualPointKeyOrderByIdAsc("A"))
                 .willReturn(List.of(
                         PointTestFixture.detail("A", "A", "A", 1_000L, 1),
                         PointTestFixture.detail("C", "A", null, 1_000L, 1),
-                        PointTestFixture.detail("D", "A", "E", 1_000L, 1)));
+                        PointTestFixture.detail("D", "A", "E", 900L, 1)));
         given(ledgers.findAllByPointKeyIn(List.of("A", "C", "D")))
                 .willReturn(List.of(ledgerD, ledgerA, ledgerC));
         given(ledgers.existsByReferencePointKeyAndPointType("A", PointType.ACCRUAL_CANCEL))
@@ -141,8 +142,10 @@ class PointQueryServiceTest {
 
         AccrualHistoryResult result = service.accrualHistory("A");
 
-        assertThat(result.transactions()).extracting(TransactionSummaryResult::pointKey)
+        assertThat(result.transactions()).extracting(item -> item.transaction().pointKey())
                 .containsExactly("A", "C", "D");
+        assertThat(result.transactions()).extracting(AccrualHistoryTransactionResult::allocatedAmount)
+                .containsExactly(1_000L, 1_000L, 900L);
     }
 
     @Test

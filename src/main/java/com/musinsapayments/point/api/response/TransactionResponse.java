@@ -1,6 +1,7 @@
 package com.musinsapayments.point.api.response;
 
 import com.fasterxml.jackson.annotation.JsonInclude;
+import com.musinsapayments.point.application.query.AccrualHistoryTransactionResult;
 import com.musinsapayments.point.application.query.TransactionDetailResult;
 import com.musinsapayments.point.application.query.TransactionSummaryResult;
 import com.musinsapayments.point.domain.ledger.AccrualTransactionType;
@@ -18,6 +19,7 @@ public record TransactionResponse(
         String referencePointKey,
         String orderNumber,
         long amount,
+        Long allocatedAmount,
         Long remainingAmount,
         Long balanceAfter,
         String status,
@@ -37,8 +39,20 @@ public record TransactionResponse(
         return new TransactionResponse(
                 result.pointKey(), result.customerId(), result.pointType(), result.transactionType(),
                 result.referencePointKey(), result.orderNumber(), result.amount(),
-                result.remainingAmount(), result.balanceAfter(), result.status(), result.expiresAt(),
+                null, result.remainingAmount(), result.balanceAfter(), result.status(), result.expiresAt(),
                 result.occurredAt(), result.transactionDate().format(DateTimeFormatter.BASIC_ISO_DATE),
+                List.of());
+    }
+
+    public static TransactionResponse fromHistory(AccrualHistoryTransactionResult result) {
+        TransactionSummaryResult transaction = result.transaction();
+        return new TransactionResponse(
+                transaction.pointKey(), transaction.customerId(), transaction.pointType(),
+                transaction.transactionType(), transaction.referencePointKey(), transaction.orderNumber(),
+                transaction.amount(), result.allocatedAmount(), transaction.remainingAmount(),
+                transaction.balanceAfter(), transaction.status(), transaction.expiresAt(),
+                transaction.occurredAt(),
+                transaction.transactionDate().format(DateTimeFormatter.BASIC_ISO_DATE),
                 List.of());
     }
 
@@ -51,7 +65,7 @@ public record TransactionResponse(
         return new TransactionResponse(
                 result.pointKey(), result.customerId(), result.pointType(), result.transactionType(),
                 result.referencePointKey(), result.orderNumber(), result.amount(),
-                result.remainingAmount(), result.balanceAfter(), result.status(), result.expiresAt(),
+                null, result.remainingAmount(), result.balanceAfter(), result.status(), result.expiresAt(),
                 result.occurredAt(), result.transactionDate().format(DateTimeFormatter.BASIC_ISO_DATE), details);
     }
 }

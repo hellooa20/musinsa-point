@@ -1,6 +1,7 @@
 package com.musinsapayments.point.application;
 
 import com.musinsapayments.point.application.query.AccrualHistoryResult;
+import com.musinsapayments.point.application.query.AccrualHistoryTransactionResult;
 import com.musinsapayments.point.application.query.LedgerDetailResult;
 import com.musinsapayments.point.application.query.PageResult;
 import com.musinsapayments.point.application.query.PointBalanceResult;
@@ -97,21 +98,27 @@ public class PointQueryService {
                 .filter(ledger -> ledger.getPointType() == PointType.ACCRUAL)
                 .orElseThrow(() -> new PointException(PointErrorCode.POINT_NOT_FOUND));
 
-        List<String> pointKeys = details.findBySourceAccrualPointKeyOrderByIdAsc(accrualPointKey).stream()
+        List<PointLedgerDetail> historyDetails =
+                details.findBySourceAccrualPointKeyOrderByIdAsc(accrualPointKey);
+        List<String> pointKeys = historyDetails.stream()
                 .map(PointLedgerDetail::getPointKey)
                 .distinct()
                 .toList();
+        Map<String, Long> allocatedAmountByPointKey = historyDetails.stream()
+                .collect(Collectors.toMap(PointLedgerDetail::getPointKey, PointLedgerDetail::getAmount));
 
         Map<String, PointLedger> byKey = ledgers.findAllByPointKeyIn(pointKeys).stream()
                 .collect(Collectors.toMap(PointLedger::getPointKey, Function.identity()));
 
         OffsetDateTime now = now();
-        List<TransactionSummaryResult> history = pointKeys.stream()
+        List<AccrualHistoryTransactionResult> history = pointKeys.stream()
                 .map(byKey::get)
                 .filter(Objects::nonNull)
                 .sorted(Comparator.comparing(PointLedger::getOccurredAt)
                         .thenComparing(PointLedger::getId, Comparator.nullsFirst(Comparator.naturalOrder())))
-                .map(ledger -> toSummary(ledger, now))
+                .map(ledger -> new AccrualHistoryTransactionResult(
+                        toSummary(ledger, now),
+                        allocatedAmountByPointKey.get(ledger.getPointKey())))
                 .toList();
         return new AccrualHistoryResult(accrual.getPointKey(), history);
     }
