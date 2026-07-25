@@ -56,7 +56,7 @@ CREATE TABLE point_ledger (
     ),
     CONSTRAINT ck_point_ledger_internal_refund CHECK (
         transaction_type <> 'EXPIRED_USE_REFUND'
-        OR (request_id IS NULL AND balance_after IS NULL)
+        OR (request_id IS NULL AND balance_after IS NOT NULL)
     )
 );
 
