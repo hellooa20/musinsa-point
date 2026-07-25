@@ -29,7 +29,7 @@
 | Language | Java 21 |
 | Framework | Spring Boot 3.5.16 |
 | Persistence | Spring Data JPA |
-| Database | H2 in-memory, PostgreSQL 호환 모드 |
+| Database | H2 in-memory |
 | API 문서 | springdoc-openapi 2.8.17 |
 
 ## 빌드와 실행
@@ -128,7 +128,7 @@
 | E  | 만료 재적립 | 1000 | E → E                                   | D 상세에 포함, 최상위 목록 제외 |
 
 ### AWS 아키텍처
-
+![aws-architecture.png](src/main/resources/docs/aws-architecture.png)
 
 ## API 명세
 
