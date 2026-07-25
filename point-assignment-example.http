@@ -1,0 +1,135 @@
+### 과제 A·B·C·D·E 시나리오
+# IntelliJ IDEA에서 위에서 아래 순서로 실행한다.
+# C 실행 후 H2 콘솔에서 A의 만료일을 변경한 다음 D를 실행한다.
+# 별도 고객 ID와 고정 requestId를 사용하므로 point-api.http 데이터와 섞이지 않는다.
+
+@baseUrl = http://localhost:8080
+@customerId = 200
+
+### 1. 고객 포인트 보유 한도 생성
+PUT {{baseUrl}}/api/v1/point-policies/{{customerId}}
+Content-Type: application/json
+
+{
+  "holdingLimit": 100000
+}
+
+### 2. A - 관리자 수기 적립 1,000
+POST {{baseUrl}}/api/v1/admin/points/accruals
+Content-Type: application/json
+
+{
+  "requestId": "10000000-0000-0000-0000-000000000001",
+  "customerId": {{customerId}},
+  "amount": 1000,
+  "validityDays": 1
+}
+
+> {%
+    client.global.set("assignmentAccrualA", response.body.pointKey);
+%}
+
+### 3. B - 일반 적립 500
+POST {{baseUrl}}/api/v1/points/accruals
+Content-Type: application/json
+
+{
+  "requestId": "10000000-0000-0000-0000-000000000002",
+  "customerId": {{customerId}},
+  "amount": 500,
+  "validityDays": 365
+}
+
+> {%
+    client.global.set("assignmentAccrualB", response.body.pointKey);
+%}
+
+### 4. A·B 적립 후 잔액 - 예상 1,500
+GET {{baseUrl}}/api/v1/points/balance?customerId={{customerId}}
+
+### 5. C - 포인트 1,200 사용
+# 수기 적립 A에서 1,000, 일반 적립 B에서 200을 차감한다.
+POST {{baseUrl}}/api/v1/points/uses
+Content-Type: application/json
+
+{
+  "requestId": "10000000-0000-0000-0000-000000000003",
+  "customerId": {{customerId}},
+  "orderNumber": "ORDER-ASSIGNMENT-001",
+  "amount": 1200
+}
+
+> {%
+    client.global.set("assignmentUseC", response.body.pointKey);
+%}
+
+### 6. C 사용 후 잔액 - 예상 300
+GET {{baseUrl}}/api/v1/points/balance?customerId={{customerId}}
+
+### 7. C 상세 - A 1,000, B 200 차감 확인
+GET {{baseUrl}}/api/v1/points/transactions/{{assignmentUseC}}
+
+### 8. H2 콘솔에서 A를 만료 상태로 변경
+# 주소: http://localhost:8080/h2-console
+# JDBC URL: jdbc:h2:mem:points
+# User Name: sa
+# Password: 비워두기
+#
+# 아래 SQL을 H2 콘솔에서 한 번 실행한다.
+# request_id 조건으로 A 한 건만 변경한다.
+#
+# UPDATE point_ledger
+#    SET expires_at = DATEADD('SECOND', -1, CURRENT_TIMESTAMP),
+#        updated_at = CURRENT_TIMESTAMP
+#  WHERE request_id = '10000000-0000-0000-0000-000000000001';
+#
+# 실행 결과가 Update count: 1인지 확인한 뒤 다음 요청을 실행한다.
+
+### 9. D - C 사용 거래 1,100 부분 취소
+# 만료된 A의 1,000은 신규 적립 E로 복원한다.
+# 만료되지 않은 B의 100은 기존 B로 복원한다.
+POST {{baseUrl}}/api/v1/points/uses/cancel
+Content-Type: application/json
+
+{
+  "requestId": "10000000-0000-0000-0000-000000000004",
+  "customerId": {{customerId}},
+  "usePointKey": "{{assignmentUseC}}",
+  "cancelOrderNumber": "ORDER-ASSIGNMENT-001-CANCEL-1",
+  "amount": 1100
+}
+
+> {%
+    client.global.set("assignmentUseCancellationD", response.body.pointKey);
+%}
+
+### 10. D 사용취소 후 잔액 - 예상 1,400
+GET {{baseUrl}}/api/v1/points/balance?customerId={{customerId}}
+
+### 11. D 상세 - A → E 1,000, B → B 100 확인
+GET {{baseUrl}}/api/v1/points/transactions/{{assignmentUseCancellationD}}
+
+> {%
+    const expiredRefund = response.body.details.find(detail =>
+        detail.sourceAccrualPointKey !== detail.targetAccrualPointKey);
+    client.global.set("assignmentExpiredRefundE", expiredRefund.targetAccrualPointKey);
+%}
+
+### 12. E 상세 - E → E 1,000과 7일 유효기간 확인
+GET {{baseUrl}}/api/v1/points/transactions/{{assignmentExpiredRefundE}}
+
+### 13. 전체 거래내역
+# 내부 만료 재적립 E는 D 상세에서는 보이지만 최상위 거래 목록에서는 제외된다.
+GET {{baseUrl}}/api/v1/points/transactions?customerId={{customerId}}&page=0&size=20
+
+### 14. A의 직접 사용·취소 이력
+# 이 API의 amount는 C·D 전체 거래 금액이다.
+# A에서 실제로 사용·복원된 금액은 allocatedAmount로 확인한다.
+GET {{baseUrl}}/api/v1/points/accruals/{{assignmentAccrualA}}/history
+
+### 최종 결과
+# A: 만료, remainingAmount 0
+# B: remainingAmount 400
+# E: remainingAmount 1,000
+# 고객 잔액: 1,400
+# C의 추가 취소 가능 금액: 100
