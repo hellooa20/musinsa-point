@@ -24,13 +24,13 @@
 
 ## 기술 스택
 
-| 항목 | 구성 |
-| --- | --- |
-| Language | Java 21 |
-| Framework | Spring Boot 3.5.16 |
-| Persistence | Spring Data JPA |
-| Database | H2 in-memory |
-| API 문서 | springdoc-openapi 2.8.17 |
+| 항목          | 구성                                               |
+|-------------|--------------------------------------------------|
+| Language    | Java 21                                          |
+| Framework   | Spring Boot 3.5.16                               |
+| Persistence | Spring Data JPA                                  |
+| Database    | H2 in-memory                                     |
+| API 문서      | springdoc-openapi 2.8.17 (OpenAPI 3, Swagger UI) |
 
 ## 빌드와 실행
 
