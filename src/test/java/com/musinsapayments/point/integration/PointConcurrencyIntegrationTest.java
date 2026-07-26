@@ -7,10 +7,12 @@ import com.musinsapayments.point.application.PointAccrualService;
 import com.musinsapayments.point.application.PointMutationResult;
 import com.musinsapayments.point.application.PointPolicyService;
 import com.musinsapayments.point.application.PointQueryService;
+import com.musinsapayments.point.application.PointUseCancellationService;
 import com.musinsapayments.point.application.PointUseService;
 import com.musinsapayments.point.application.command.AccrualCancellationCommand;
 import com.musinsapayments.point.application.command.AccrualCommand;
 import com.musinsapayments.point.application.command.ChangePointPolicyCommand;
+import com.musinsapayments.point.application.command.PointUseCancellationCommand;
 import com.musinsapayments.point.application.command.PointUseCommand;
 import com.musinsapayments.point.domain.exception.PointErrorCode;
 import com.musinsapayments.point.domain.exception.PointException;
@@ -53,6 +55,9 @@ class PointConcurrencyIntegrationTest {
 
     @Autowired
     PointUseService useService;
+
+    @Autowired
+    PointUseCancellationService useCancellationService;
 
     @Autowired
     PointQueryService queryService;
@@ -99,6 +104,70 @@ class PointConcurrencyIntegrationTest {
         assertThat(results).hasSize(2);
         assertThat(results).extracting(PointMutationResult::pointKey).containsOnly(results.peek().pointKey());
         assertThat(ledgers.count()).isEqualTo(1L);
+    }
+
+    @Test
+    void 동일_고객의_같은_requestId_동시_적립취소는_같은_결과를_재생한다() throws Exception {
+        createPolicy(100L);
+        PointMutationResult accrual = accrualService.accrueNormal(
+                new AccrualCommand(PointTestFixture.uuid(21), 100L, 1_000L, 365));
+        AccrualCancellationCommand command = new AccrualCancellationCommand(
+                PointTestFixture.uuid(22), 100L, accrual.pointKey());
+        CountDownLatch ready = new CountDownLatch(2);
+        CountDownLatch start = new CountDownLatch(1);
+        ConcurrentLinkedQueue<PointMutationResult> results = new ConcurrentLinkedQueue<>();
+
+        runConcurrently(
+                mutationTask(() -> accrualCancellationService.cancel(command), ready, start, results),
+                mutationTask(() -> accrualCancellationService.cancel(command), ready, start, results),
+                ready, start);
+
+        assertSameReplayResults(results);
+        assertThat(ledgers.findByReferencePointKeyAndPointType(
+                accrual.pointKey(), PointType.ACCRUAL_CANCEL)).hasSize(1);
+    }
+
+    @Test
+    void 동일_고객의_같은_requestId_동시_사용은_같은_결과를_재생한다() throws Exception {
+        createPolicy(100L);
+        accrualService.accrueNormal(new AccrualCommand(PointTestFixture.uuid(21), 100L, 1_000L, 365));
+        PointUseCommand command = new PointUseCommand(
+                PointTestFixture.uuid(22), 100L, "ORDER-22", 600L);
+        CountDownLatch ready = new CountDownLatch(2);
+        CountDownLatch start = new CountDownLatch(1);
+        ConcurrentLinkedQueue<PointMutationResult> results = new ConcurrentLinkedQueue<>();
+
+        runConcurrently(
+                mutationTask(() -> useService.use(command), ready, start, results),
+                mutationTask(() -> useService.use(command), ready, start, results),
+                ready, start);
+
+        assertSameReplayResults(results);
+        assertThat(ledgers.findByOrderNumber("ORDER-22")).isPresent();
+        assertThat(queryService.balance(100L).balance()).isEqualTo(400L);
+    }
+
+    @Test
+    void 동일_고객의_같은_requestId_동시_사용취소는_같은_결과를_재생한다() throws Exception {
+        createPolicy(100L);
+        accrualService.accrueNormal(new AccrualCommand(PointTestFixture.uuid(21), 100L, 1_000L, 365));
+        PointMutationResult use = useService.use(
+                new PointUseCommand(PointTestFixture.uuid(22), 100L, "ORDER-22", 1_000L));
+        PointUseCancellationCommand command = new PointUseCancellationCommand(
+                PointTestFixture.uuid(23), 100L, use.pointKey(), "ORDER-22-CANCEL", 600L);
+        CountDownLatch ready = new CountDownLatch(2);
+        CountDownLatch start = new CountDownLatch(1);
+        ConcurrentLinkedQueue<PointMutationResult> results = new ConcurrentLinkedQueue<>();
+
+        runConcurrently(
+                mutationTask(() -> useCancellationService.cancel(command), ready, start, results),
+                mutationTask(() -> useCancellationService.cancel(command), ready, start, results),
+                ready, start);
+
+        assertSameReplayResults(results);
+        assertThat(ledgers.findByReferencePointKeyAndPointType(
+                use.pointKey(), PointType.USE_CANCEL)).hasSize(1);
+        assertThat(queryService.balance(100L).balance()).isEqualTo(600L);
     }
 
     @Test
@@ -177,6 +246,19 @@ class PointConcurrencyIntegrationTest {
         };
     }
 
+    private Callable<Void> mutationTask(
+            Callable<PointMutationResult> mutation, CountDownLatch ready, CountDownLatch start,
+            ConcurrentLinkedQueue<PointMutationResult> results) {
+        return () -> {
+            ready.countDown();
+            if (!start.await(5, TimeUnit.SECONDS)) {
+                throw new IllegalStateException("동시 시작 신호를 받지 못했습니다.");
+            }
+            results.add(mutation.call());
+            return null;
+        };
+    }
+
     private Callable<Void> outcomeTask(
             CountDownLatch ready, CountDownLatch start, AtomicReference<MutationOutcome> outcome,
             PointErrorCode expectedFailure, Callable<PointMutationResult> mutation) {
@@ -203,6 +285,11 @@ class PointConcurrencyIntegrationTest {
                 && cancelOutcome == MutationOutcome.ACCRUAL_CANCEL_NOT_ALLOWED)
                 || (useOutcome == MutationOutcome.POINT_BALANCE_INSUFFICIENT
                 && cancelOutcome == MutationOutcome.SUCCESS);
+    }
+
+    private void assertSameReplayResults(ConcurrentLinkedQueue<PointMutationResult> results) {
+        assertThat(results).hasSize(2);
+        assertThat(results).extracting(PointMutationResult::pointKey).containsOnly(results.peek().pointKey());
     }
 
     private final void runConcurrently(
