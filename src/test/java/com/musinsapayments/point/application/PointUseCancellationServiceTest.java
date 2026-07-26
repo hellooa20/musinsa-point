@@ -19,6 +19,7 @@ import com.musinsapayments.point.domain.ledger.PointLedger;
 import com.musinsapayments.point.domain.ledger.PointLedgerDetail;
 import com.musinsapayments.point.domain.ledger.PointType;
 import com.musinsapayments.point.domain.policy.CustomerPointPolicy;
+import com.musinsapayments.point.repository.CanceledAmountBySource;
 import com.musinsapayments.point.repository.CustomerPointPolicyRepository;
 import com.musinsapayments.point.repository.PointLedgerDetailRepository;
 import com.musinsapayments.point.repository.PointLedgerRepository;
@@ -359,7 +360,7 @@ class PointUseCancellationServiceTest {
 
     private void prepare(
             long holdingLimit, long currentBalance, PointLedger use, List<PointLedgerDetail> originalDetails,
-            List<Object[]> canceledRows, List<PointLedger> sources) {
+            List<CanceledAmountBySource> canceledRows, List<PointLedger> sources) {
         given(clock.instant()).willReturn(INSTANT);
         given(policies.findByCustomerIdForUpdate(CUSTOMER_ID)).willReturn(Optional.of(policy(holdingLimit)));
         given(ledgers.findByPointKeyAndCustomerId("C", CUSTOMER_ID)).willReturn(Optional.of(use));
@@ -405,13 +406,13 @@ class PointUseCancellationServiceTest {
         return PointTestFixture.detail(pointKey, sourceKey, null, amount, sequenceNo);
     }
 
-    private List<Object[]> canceled(String sourceKey, long amount) {
-        return List.<Object[]>of(new Object[] {sourceKey, amount});
+    private List<CanceledAmountBySource> canceled(String sourceKey, long amount) {
+        return List.of(new CanceledAmountBySource(sourceKey, amount));
     }
 
-    private long sumCanceledRows(List<Object[]> rows) {
+    private long sumCanceledRows(List<CanceledAmountBySource> rows) {
         return rows.stream()
-                .mapToLong(row -> ((Number) row[1]).longValue())
+                .mapToLong(CanceledAmountBySource::canceledAmount)
                 .sum();
     }
 

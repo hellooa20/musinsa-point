@@ -10,6 +10,7 @@ import com.musinsapayments.point.domain.ledger.PointType;
 import com.musinsapayments.point.domain.policy.CustomerPointPolicy;
 import com.musinsapayments.point.domain.use.PointCancellationAllocation;
 import com.musinsapayments.point.domain.use.PointUseCancellationAllocator;
+import com.musinsapayments.point.repository.CanceledAmountBySource;
 import com.musinsapayments.point.repository.CustomerPointPolicyRepository;
 import com.musinsapayments.point.repository.PointLedgerDetailRepository;
 import com.musinsapayments.point.repository.PointLedgerRepository;
@@ -299,10 +300,10 @@ public class PointUseCancellationService {
      * @param rows source pointKey와 누적 취소 금액 조회 결과
      * @return source pointKey별 누적 취소 금액
      */
-    private Map<String, Long> toCanceledMap(List<Object[]> rows) {
+    private Map<String, Long> toCanceledMap(List<CanceledAmountBySource> rows) {
         Map<String, Long> result = new HashMap<>();
-        for (Object[] row : rows) {
-            result.put((String) row[0], ((Number) row[1]).longValue());
+        for (CanceledAmountBySource row : rows) {
+            result.put(row.sourceAccrualPointKey(), row.canceledAmount());
         }
         return Map.copyOf(result);
     }

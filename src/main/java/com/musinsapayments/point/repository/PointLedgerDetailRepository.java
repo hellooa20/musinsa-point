@@ -12,12 +12,13 @@ public interface PointLedgerDetailRepository extends JpaRepository<PointLedgerDe
     List<PointLedgerDetail> findBySourceAccrualPointKeyOrderByIdAsc(String sourceAccrualPointKey);
 
     @Query("""
-            select d.sourceAccrualPointKey, coalesce(sum(d.amount), 0)
+            select new com.musinsapayments.point.repository.CanceledAmountBySource(
+                       d.sourceAccrualPointKey, sum(d.amount))
               from PointLedgerDetail d, PointLedger l
              where d.pointKey = l.pointKey
                and l.pointType = com.musinsapayments.point.domain.ledger.PointType.USE_CANCEL
                and l.referencePointKey = :usePointKey
              group by d.sourceAccrualPointKey
             """)
-    List<Object[]> sumCanceledAmountBySource(String usePointKey);
+    List<CanceledAmountBySource> sumCanceledAmountBySource(String usePointKey);
 }
