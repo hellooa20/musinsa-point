@@ -66,12 +66,12 @@ class PointLedgerTest {
 
         PointLedger refund = PointLedger.createExpiredUseRefund(
                 100L, "refund-a", "use-cancel-a", 1_000L,
-                NOW.plusDays(7), NOW, LocalDate.of(2026, 7, 22));
+                1_400L, NOW.plusDays(7), NOW, LocalDate.of(2026, 7, 22));
 
         assertThat(refund.getTransactionType()).isEqualTo(AccrualTransactionType.EXPIRED_USE_REFUND);
         assertThat(refund.getReferencePointKey()).isEqualTo("use-cancel-a");
         assertThat(refund.getRequestId()).isNull();
-        assertThat(refund.getBalanceAfter()).isNull();
+        assertThat(refund.getBalanceAfter()).isEqualTo(1_400L);
     }
 
     @Test

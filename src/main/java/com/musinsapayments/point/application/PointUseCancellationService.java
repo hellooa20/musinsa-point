@@ -146,7 +146,8 @@ public class PointUseCancellationService {
                 String refundPointKey = keys.generate();
                 PointLedger refund = PointLedger.createExpiredUseRefund(
                         command.customerId(), refundPointKey, cancellationPointKey,
-                        allocation.amount(), now.plusDays(properties.expiredRefundValidityDays()),
+                        allocation.amount(), balanceAfter,
+                        now.plusDays(properties.expiredRefundValidityDays()),
                         now, now.toLocalDate());
                 ledgers.save(refund);
                 newDetails.add(PointLedgerDetail.create(

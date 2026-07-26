@@ -397,7 +397,7 @@ GET /api/v1/points/transactions/dddddddd-dddd-dddd-dddd-dddddddddddd
 <summary><strong>적립 건 사용·복원 이력 조회</strong></summary>
 
 ```http
-GET /api/v1/points/accruals/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa/history
+GET /api/v1/points/accruals/1781aa55-c3d0-484b-a31c-c83c59e05880/history
 ```
 
 ```json

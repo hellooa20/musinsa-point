@@ -133,7 +133,7 @@ public class PointLedger {
     // 사용 취소 만료 재적립 건 생성
     public static PointLedger createExpiredUseRefund(
             Long customerId, String pointKey, String useCancellationPointKey,
-            long amount, OffsetDateTime expiresAt, OffsetDateTime occurredAt,
+            long amount, long balanceAfter, OffsetDateTime expiresAt, OffsetDateTime occurredAt,
             LocalDate transactionDate) {
 
         if (expiresAt == null || amount <= 0) {
@@ -141,12 +141,12 @@ public class PointLedger {
         }
 
         PointLedger ledger = base(customerId, pointKey, null, PointType.ACCRUAL,
-                amount, 0L, occurredAt, transactionDate);
+                amount, balanceAfter, occurredAt, transactionDate);
         ledger.transactionType = AccrualTransactionType.EXPIRED_USE_REFUND;
         ledger.referencePointKey = requireText(useCancellationPointKey, "원본 사용취소 pointKey");
         ledger.remainingAmount = amount;
         ledger.expiresAt = expiresAt;
-        return ledger.withoutBalanceSnapshot();
+        return ledger;
     }
 
     public void consume(long amount, OffsetDateTime now) {
@@ -274,11 +274,6 @@ public class PointLedger {
         ledger.createdAt = occurredAt;
         ledger.updatedAt = occurredAt;
         return ledger;
-    }
-
-    private PointLedger withoutBalanceSnapshot() {
-        balanceAfter = null;
-        return this;
     }
 
     private void requireAccrual() {

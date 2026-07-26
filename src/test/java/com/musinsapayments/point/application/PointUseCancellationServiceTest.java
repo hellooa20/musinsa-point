@@ -29,6 +29,7 @@ import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.time.ZoneId;
 import java.util.List;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
@@ -90,7 +91,8 @@ class PointUseCancellationServiceTest {
         assertThat(liveB.getRemainingAmount()).isEqualTo(400L);
         then(ledgers).should().save(argThat(it -> it.getPointKey().equals("D")));
         then(ledgers).should().save(argThat(it -> it.getPointKey().equals("E")
-                && it.getReferencePointKey().equals("D") && it.getBalanceAfter() == null));
+                && it.getReferencePointKey().equals("D")
+                && Objects.equals(it.getBalanceAfter(), 1_400L)));
         assertDetails(
                 tuple("D", "A", "E", 1_000L, 1),
                 tuple("D", "B", "B", 100L, 2),
@@ -171,7 +173,8 @@ class PointUseCancellationServiceTest {
     void 만료된_재적립_E도_다시_E로_재적립한다() {
         PointLedger use = PointTestFixture.use("C", 700L);
         PointLedger expiredRefund = PointLedger.createExpiredUseRefund(
-                CUSTOMER_ID, "E1", "OLD-D", 700L, NOW, NOW.minusDays(7), NOW.toLocalDate());
+                CUSTOMER_ID, "E1", "OLD-D", 700L, 700L,
+                NOW, NOW.minusDays(7), NOW.toLocalDate());
         expiredRefund.consume(700L, NOW.minusNanos(1));
         prepare(10_000L, 0L, use, List.of(detail("C", "E1", 700L, 1)), List.of(), List.of(expiredRefund));
         given(keys.generate()).willReturn("D", "E2");
@@ -195,6 +198,10 @@ class PointUseCancellationServiceTest {
 
         service.cancel(command("C", "CANCEL-1", 1_000L));
 
+        then(ledgers).should().save(argThat(it -> it.getPointKey().equals("E1")
+                && Objects.equals(it.getBalanceAfter(), 1_000L)));
+        then(ledgers).should().save(argThat(it -> it.getPointKey().equals("E2")
+                && Objects.equals(it.getBalanceAfter(), 1_000L)));
         assertDetails(
                 tuple("D", "A", "E1", 500L, 1), tuple("D", "B", "E2", 500L, 2),
                 tuple("E1", "E1", "E1", 500L, 1), tuple("E2", "E2", "E2", 500L, 1));

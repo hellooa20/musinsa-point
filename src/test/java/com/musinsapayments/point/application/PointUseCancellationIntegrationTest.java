@@ -62,7 +62,7 @@ class PointUseCancellationIntegrationTest {
         assertThat(ledgers.findByPointKey("B").orElseThrow().getRemainingAmount()).isEqualTo(400L);
         assertThat(refund.getTransactionType()).isEqualTo(AccrualTransactionType.EXPIRED_USE_REFUND);
         assertThat(refund.getAmount()).isEqualTo(1_000L);
-        assertThat(refund.getBalanceAfter()).isNull();
+        assertThat(refund.getBalanceAfter()).isEqualTo(1_400L);
         assertThat(refund.getExpiresAt()).isEqualTo(refund.getOccurredAt().plusDays(7));
         assertThat(details.findByPointKeyOrderBySequenceNoAsc(cancellation.getPointKey())).extracting(
                 PointLedgerDetail::getSourceAccrualPointKey,

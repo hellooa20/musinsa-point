@@ -1,5 +1,6 @@
 package com.musinsapayments.point.application;
 
+import com.musinsapayments.point.domain.ledger.AccrualTransactionType;
 import com.musinsapayments.point.domain.ledger.PointLedger;
 import com.musinsapayments.point.domain.ledger.PointType;
 import java.time.LocalDate;
@@ -18,7 +19,8 @@ public record PointMutationResult(
         OffsetDateTime expiresAt) {
 
     public static PointMutationResult from(PointLedger ledger) {
-        if (ledger.getBalanceAfter() == null) {
+        if (ledger.getTransactionType() == AccrualTransactionType.EXPIRED_USE_REFUND
+                || ledger.getBalanceAfter() == null) {
             throw new IllegalArgumentException("내부 재적립은 변경 응답으로 반환하지 않습니다.");
         }
         return new PointMutationResult(

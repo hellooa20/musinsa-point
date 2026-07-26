@@ -251,7 +251,7 @@ class PointAccrualCancellationServiceTest {
             long remainingAmount, OffsetDateTime expiresAt) {
         PointLedger ledger = type == AccrualTransactionType.EXPIRED_USE_REFUND
                 ? PointLedger.createExpiredUseRefund(
-                        CUSTOMER_ID, pointKey, "USE-CANCEL-1", amount, expiresAt,
+                        CUSTOMER_ID, pointKey, "USE-CANCEL-1", amount, amount, expiresAt,
                         NOW, LocalDate.of(2026, 7, 22))
                 : PointLedger.createAccrual(
                         CUSTOMER_ID, pointKey, UUID.randomUUID().toString(), type, null,

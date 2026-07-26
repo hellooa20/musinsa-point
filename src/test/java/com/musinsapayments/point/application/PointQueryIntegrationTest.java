@@ -53,7 +53,8 @@ class PointQueryIntegrationTest {
         PointLedger use = saveUse("C", 400L, now.minusDays(1));
         PointLedger cancellation = saveUseCancellation("D", "C", 400L, now);
         PointLedger refund = ledgers.saveAndFlush(PointLedger.createExpiredUseRefund(
-                PointTestFixture.CUSTOMER_ID, "E", "D", 400L, now.plusDays(7), now, now.toLocalDate()));
+                PointTestFixture.CUSTOMER_ID, "E", "D", 400L, 1_000L,
+                now.plusDays(7), now, now.toLocalDate()));
         details.saveAndFlush(PointLedgerDetail.create("C", "A", null, 400L, 1, now.minusDays(1)));
         details.saveAndFlush(PointLedgerDetail.create("D", "A", "E", 250L, 2, now));
         details.saveAndFlush(PointLedgerDetail.create("D", "B", null, 150L, 1, now));
