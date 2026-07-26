@@ -74,7 +74,7 @@ class PointConcurrencyIntegrationTest {
     MutableClock clock;
 
     @Test
-    void 동일_고객이_같은_잔액을_동시에_사용하면_한_요청만_성공한다() throws Exception {
+    void 동일_고객이_같은_잔액을_동시에_사용하면_한_요청만_성공한다_잔액_부족() throws Exception {
         createPolicy(100L);
         accrualService.accrueNormal(new AccrualCommand(PointTestFixture.uuid(1), 100L, 1_000L, 365));
         CountDownLatch ready = new CountDownLatch(2);
@@ -92,6 +92,27 @@ class PointConcurrencyIntegrationTest {
         assertThat(insufficient).hasValue(1);
         assertThat(queryService.balance(100L).balance()).isZero();
         assertThat(ledgers.findSpendableAccruals(100L, now())).isEmpty();
+    }
+
+    @Test
+    void 동일_고객이_같은_잔액을_동시에_사용하면_한_요청만_성공한다_잔액_충분() throws Exception {
+        createPolicy(100L);
+        accrualService.accrueNormal(new AccrualCommand(PointTestFixture.uuid(1), 100L, 2_300L, 365));
+        CountDownLatch ready = new CountDownLatch(2);
+        CountDownLatch start = new CountDownLatch(1);
+        AtomicInteger successes = new AtomicInteger();
+        AtomicInteger insufficient = new AtomicInteger();
+
+        Callable<Void> request1 = useTask(
+                PointTestFixture.uuid(11), "ORDER-11", ready, start, successes, insufficient);
+        Callable<Void> request2 = useTask(
+                PointTestFixture.uuid(12), "ORDER-12", ready, start, successes, insufficient);
+        runConcurrently(request1, request2, ready, start);
+
+        assertThat(successes).hasValue(2);
+        assertThat(insufficient).hasValue(0);
+        assertThat(queryService.balance(100L).balance()).isEqualTo(300L);
+        assertThat(ledgers.findSpendableAccruals(100L, now())).isNotEmpty();
     }
 
     @Test
