@@ -76,13 +76,11 @@ public class GlobalExceptionHandler {
 
     @ExceptionHandler(DataIntegrityViolationException.class)
     public ResponseEntity<PointErrorResponse> handleIntegrity(DataIntegrityViolationException exception) {
-        String message = Optional.ofNullable(exception.getMostSpecificCause().getMessage())
-                .orElse("")
-                .toLowerCase(Locale.ROOT);
-        if (message.contains("uk_point_ledger_request_id")) {
+        String constraintName = constraintName(exception);
+        if (constraintName.contains("uk_point_ledger_request_id")) {
             return conflict(PointErrorCode.REQUEST_ID_CONFLICT);
         }
-        if (message.contains("uk_point_ledger_order_number")) {
+        if (constraintName.contains("uk_point_ledger_order_number")) {
             return conflict(PointErrorCode.ORDER_NUMBER_CONFLICT);
         }
         return ResponseEntity.internalServerError()
@@ -97,6 +95,20 @@ public class GlobalExceptionHandler {
 
     private ResponseEntity<PointErrorResponse> conflict(PointErrorCode errorCode) {
         return ResponseEntity.status(HttpStatus.CONFLICT).body(error(errorCode, List.of()));
+    }
+
+    private String constraintName(DataIntegrityViolationException exception) {
+        Throwable cause = exception;
+        while (cause != null) {
+            if (cause instanceof org.hibernate.exception.ConstraintViolationException violation
+                    && violation.getConstraintName() != null) {
+                return violation.getConstraintName().toLowerCase(Locale.ROOT);
+            }
+            cause = cause.getCause();
+        }
+        return Optional.ofNullable(exception.getMostSpecificCause().getMessage())
+                .orElse("")
+                .toLowerCase(Locale.ROOT);
     }
 
     private PointErrorResponse error(

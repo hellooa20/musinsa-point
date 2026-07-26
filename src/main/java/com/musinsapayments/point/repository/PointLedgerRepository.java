@@ -24,6 +24,9 @@ public interface PointLedgerRepository extends JpaRepository<PointLedger, Long> 
 
     List<PointLedger> findAllByPointKeyIn(Collection<String> pointKeys);
 
+    List<PointLedger> findByReferencePointKeyInAndPointTypeIn(
+            Collection<String> referencePointKeys, Collection<PointType> pointTypes);
+
     @Query("""
             select coalesce(sum(l.remainingAmount), 0)
               from PointLedger l

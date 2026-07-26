@@ -67,6 +67,9 @@ class PointQueryIntegrationTest {
                 0, 20));
 
         assertThat(result.content()).extracting(TransactionSummaryResult::pointKey).containsExactly("D", "C");
+        assertThat(result.content()).filteredOn(item -> item.pointKey().equals("C"))
+                .extracting(TransactionSummaryResult::status)
+                .containsExactly("FULLY_CANCELED");
         assertThat(result.content()).noneMatch(item -> item.pointKey().equals(refund.getPointKey()));
         assertThat(empty.content()).isEmpty();
         assertThat(empty.totalElements()).isZero();

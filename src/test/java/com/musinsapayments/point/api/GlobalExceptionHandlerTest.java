@@ -52,6 +52,8 @@ class GlobalExceptionHandlerTest {
     void 무결성_제약명과_입력_오류를_각각_변환한다() throws Exception {
         assertError(get("/test-errors/integrity/request"),
                 status().isConflict(), "REQUEST_ID_CONFLICT");
+        assertError(get("/test-errors/integrity/structured-request"),
+                status().isConflict(), "REQUEST_ID_CONFLICT");
         assertError(get("/test-errors/integrity/order"),
                 status().isConflict(), "ORDER_NUMBER_CONFLICT");
         assertError(get("/test-errors/type/not-a-uuid"), status().isBadRequest(), "INVALID_REQUEST");
@@ -98,6 +100,13 @@ class ExceptionTestController {
 
     @org.springframework.web.bind.annotation.GetMapping("/test-errors/integrity/{constraint}")
     void integrity(@org.springframework.web.bind.annotation.PathVariable String constraint) {
+        if (constraint.equals("structured-request")) {
+            org.hibernate.exception.ConstraintViolationException cause =
+                    new org.hibernate.exception.ConstraintViolationException(
+                            "constraint", new java.sql.SQLException("constraint"),
+                            "insert", "uk_point_ledger_request_id");
+            throw new DataIntegrityViolationException("integrity", cause);
+        }
         String name = constraint.equals("request")
                 ? "uk_point_ledger_request_id" : "uk_point_ledger_order_number";
         throw new DataIntegrityViolationException("integrity", new RuntimeException(name));

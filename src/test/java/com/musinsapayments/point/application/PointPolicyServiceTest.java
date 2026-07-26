@@ -54,7 +54,8 @@ class PointPolicyServiceTest {
         PointPolicyResult result = service.change(new ChangePointPolicyCommand(100L, 10_000L));
 
         assertThat(result).isEqualTo(new PointPolicyResult(100L, 10_000L));
-        then(policies).should().save(any(CustomerPointPolicy.class));
+        then(policies).should().upsertForInitialCreation(
+                100L, 10_000L, OffsetDateTime.parse("2026-07-22T10:00:00+09:00"));
     }
 
     @Test

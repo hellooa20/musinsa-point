@@ -20,9 +20,12 @@ import com.musinsapayments.point.repository.PointLedgerRepository;
 import java.time.Clock;
 import java.time.OffsetDateTime;
 import java.util.Comparator;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 import org.springframework.data.domain.Page;
@@ -71,8 +74,9 @@ public class PointQueryService {
                 condition.customerId(), condition.pointType(), condition.fromDate(), condition.toDate(), pageable);
 
         OffsetDateTime now = now();
+        Map<String, String> statuses = dynamicStatuses(page.getContent(), now);
         List<TransactionSummaryResult> content = page.getContent().stream()
-                .map(ledger -> toSummary(ledger, now))
+                .map(ledger -> toSummary(ledger, statuses.get(ledger.getPointKey())))
                 .toList();
         return PageResult.from(page, content);
     }
@@ -134,24 +138,74 @@ public class PointQueryService {
         if (ledger.getPointType() == PointType.USE) {
             long canceled = ledgers.sumAmountByReferencePointKeyAndPointType(
                     ledger.getPointKey(), PointType.USE_CANCEL);
-            if (canceled == 0) {
-                return UseStatus.USED.name();
-            }
-            if (canceled == ledger.getAmount()) {
-                return UseStatus.FULLY_CANCELED.name();
-            }
-            return UseStatus.PARTIALLY_CANCELED.name();
+            return useStatus(ledger, canceled);
         }
         return ledger.getPointType().name();
     }
 
+    //거래 목록의 취소 상태를 배치 조회하여 계산
+    private Map<String, String> dynamicStatuses(
+            List<PointLedger> transactions, OffsetDateTime now) {
+        List<String> targetPointKeys = transactions.stream()
+                .filter(ledger -> ledger.getPointType() == PointType.ACCRUAL
+                        || ledger.getPointType() == PointType.USE)
+                .map(PointLedger::getPointKey)
+                .toList();
+        if (targetPointKeys.isEmpty()) {
+            return transactions.stream().collect(Collectors.toMap(
+                    PointLedger::getPointKey, ledger -> ledger.getPointType().name()));
+        }
+
+        List<PointLedger> cancellations = ledgers.findByReferencePointKeyInAndPointTypeIn(
+                targetPointKeys, List.of(PointType.ACCRUAL_CANCEL, PointType.USE_CANCEL));
+        Set<String> canceledAccrualPointKeys = new HashSet<>();
+        Map<String, Long> canceledUseAmounts = new HashMap<>();
+        for (PointLedger cancellation : cancellations) {
+            if (cancellation.getPointType() == PointType.ACCRUAL_CANCEL) {
+                canceledAccrualPointKeys.add(cancellation.getReferencePointKey());
+            } else if (cancellation.getPointType() == PointType.USE_CANCEL) {
+                canceledUseAmounts.merge(
+                        cancellation.getReferencePointKey(), cancellation.getAmount(), Math::addExact);
+            }
+        }
+
+        Map<String, String> result = new HashMap<>();
+        for (PointLedger ledger : transactions) {
+            String status;
+            if (ledger.getPointType() == PointType.ACCRUAL) {
+                status = ledger.accrualStatus(
+                        now, canceledAccrualPointKeys.contains(ledger.getPointKey())).name();
+            } else if (ledger.getPointType() == PointType.USE) {
+                status = useStatus(ledger, canceledUseAmounts.getOrDefault(ledger.getPointKey(), 0L));
+            } else {
+                status = ledger.getPointType().name();
+            }
+            result.put(ledger.getPointKey(), status);
+        }
+        return Map.copyOf(result);
+    }
+
+    private String useStatus(PointLedger ledger, long canceledAmount) {
+        if (canceledAmount == 0) {
+            return UseStatus.USED.name();
+        }
+        if (canceledAmount == ledger.getAmount()) {
+            return UseStatus.FULLY_CANCELED.name();
+        }
+        return UseStatus.PARTIALLY_CANCELED.name();
+    }
+
     // 원장을 거래 목록 응답 형태로 변환
     private TransactionSummaryResult toSummary(PointLedger ledger, OffsetDateTime now) {
+        return toSummary(ledger, dynamicStatus(ledger, now));
+    }
+
+    private TransactionSummaryResult toSummary(PointLedger ledger, String status) {
         return new TransactionSummaryResult(
                 ledger.getPointKey(), ledger.getCustomerId(), ledger.getPointType(),
                 ledger.getTransactionType(), ledger.getReferencePointKey(), ledger.getOrderNumber(),
                 ledger.getAmount(), ledger.getRemainingAmount(), ledger.getBalanceAfter(),
-                dynamicStatus(ledger, now), ledger.getExpiresAt(), ledger.getOccurredAt(),
+                status, ledger.getExpiresAt(), ledger.getOccurredAt(),
                 ledger.getTransactionDate());
     }
 

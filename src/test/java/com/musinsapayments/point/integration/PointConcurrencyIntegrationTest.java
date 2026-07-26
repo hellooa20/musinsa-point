@@ -14,9 +14,11 @@ import com.musinsapayments.point.application.command.AccrualCommand;
 import com.musinsapayments.point.application.command.ChangePointPolicyCommand;
 import com.musinsapayments.point.application.command.PointUseCancellationCommand;
 import com.musinsapayments.point.application.command.PointUseCommand;
+import com.musinsapayments.point.application.query.PointPolicyResult;
 import com.musinsapayments.point.domain.exception.PointErrorCode;
 import com.musinsapayments.point.domain.exception.PointException;
 import com.musinsapayments.point.domain.ledger.PointType;
+import com.musinsapayments.point.repository.CustomerPointPolicyRepository;
 import com.musinsapayments.point.repository.PointLedgerRepository;
 import com.musinsapayments.point.support.MutableClock;
 import com.musinsapayments.point.support.PointTestFixture;
@@ -66,6 +68,9 @@ class PointConcurrencyIntegrationTest {
     PointLedgerRepository ledgers;
 
     @Autowired
+    CustomerPointPolicyRepository policies;
+
+    @Autowired
     MutableClock clock;
 
     @Test
@@ -104,6 +109,24 @@ class PointConcurrencyIntegrationTest {
         assertThat(results).hasSize(2);
         assertThat(results).extracting(PointMutationResult::pointKey).containsOnly(results.peek().pointKey());
         assertThat(ledgers.count()).isEqualTo(1L);
+    }
+
+    @Test
+    void 동일_신규_고객의_정책을_동시에_생성해도_한_행만_남는다() throws Exception {
+        ChangePointPolicyCommand command = new ChangePointPolicyCommand(100L, 10_000L);
+        CountDownLatch ready = new CountDownLatch(2);
+        CountDownLatch start = new CountDownLatch(1);
+        ConcurrentLinkedQueue<PointPolicyResult> results = new ConcurrentLinkedQueue<>();
+
+        runConcurrently(
+                policyTask(command, ready, start, results),
+                policyTask(command, ready, start, results),
+                ready, start);
+
+        assertThat(results).hasSize(2)
+                .allMatch(result -> result.equals(new PointPolicyResult(100L, 10_000L)));
+        assertThat(policies.count()).isEqualTo(1L);
+        assertThat(policies.findById(100L).orElseThrow().getHoldingLimit()).isEqualTo(10_000L);
     }
 
     @Test
@@ -255,6 +278,19 @@ class PointConcurrencyIntegrationTest {
                 throw new IllegalStateException("동시 시작 신호를 받지 못했습니다.");
             }
             results.add(mutation.call());
+            return null;
+        };
+    }
+
+    private Callable<Void> policyTask(
+            ChangePointPolicyCommand command, CountDownLatch ready, CountDownLatch start,
+            ConcurrentLinkedQueue<PointPolicyResult> results) {
+        return () -> {
+            ready.countDown();
+            if (!start.await(5, TimeUnit.SECONDS)) {
+                throw new IllegalStateException("동시 시작 신호를 받지 못했습니다.");
+            }
+            results.add(policyService.change(command));
             return null;
         };
     }

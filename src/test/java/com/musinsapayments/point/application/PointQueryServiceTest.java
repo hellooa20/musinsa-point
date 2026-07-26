@@ -2,10 +2,13 @@ package com.musinsapayments.point.application;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.groups.Tuple.tuple;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.BDDMockito.given;
+import static org.mockito.BDDMockito.then;
+import static org.mockito.Mockito.never;
 
 import com.musinsapayments.point.application.query.AccrualHistoryResult;
 import com.musinsapayments.point.application.query.AccrualHistoryTransactionResult;
@@ -85,6 +88,41 @@ class PointQueryServiceTest {
         assertThat(result.content()).extracting(TransactionSummaryResult::pointKey)
                 .containsExactly("D");
         assertThat(result.content().getFirst().balanceAfter()).isEqualTo(1_400L);
+    }
+
+    @Test
+    void 거래내역의_적립과_사용_상태는_취소원장을_한번에_조회해_계산한다() {
+        PointLedger accrualA = PointTestFixture.accrual(
+                "A", AccrualTransactionType.NORMAL, 1_000L, 1_000L, NOW.plusDays(1));
+        PointLedger useC = PointTestFixture.use("C", 1_000L);
+        PointLedger useF = PointTestFixture.use("F", 500L);
+        PointLedger accrualCancel = PointLedger.createAccrualCancellation(
+                CUSTOMER_ID, "B", PointTestFixture.uuid(2).toString(),
+                "A", 1_000L, 500L, NOW, NOW.toLocalDate());
+        PointLedger partialUseCancel = PointLedger.createUseCancellation(
+                CUSTOMER_ID, "D", PointTestFixture.uuid(4).toString(),
+                "C", "ORDER-C-CANCEL", 400L, 900L, NOW, NOW.toLocalDate());
+        PointLedger fullUseCancel = PointLedger.createUseCancellation(
+                CUSTOMER_ID, "G", PointTestFixture.uuid(7).toString(),
+                "F", "ORDER-F-CANCEL", 500L, 1_400L, NOW, NOW.toLocalDate());
+        given(policies.findById(CUSTOMER_ID)).willReturn(Optional.of(PointTestFixture.policy(10_000L)));
+        given(ledgers.findTopLevelTransactions(eq(CUSTOMER_ID), isNull(), isNull(), isNull(), any()))
+                .willReturn(new PageImpl<>(List.of(accrualA, useC, useF), PageRequest.of(0, 20), 3));
+        given(ledgers.findByReferencePointKeyInAndPointTypeIn(any(), any()))
+                .willReturn(List.of(accrualCancel, partialUseCancel, fullUseCancel));
+
+        PageResult<TransactionSummaryResult> result = service.transactions(
+                new TransactionSearchCondition(CUSTOMER_ID, null, null, null, 0, 20));
+
+        assertThat(result.content()).extracting(
+                TransactionSummaryResult::pointKey, TransactionSummaryResult::status)
+                .containsExactly(
+                        tuple("A", "CANCELED"),
+                        tuple("C", "PARTIALLY_CANCELED"),
+                        tuple("F", "FULLY_CANCELED"));
+        then(ledgers).should().findByReferencePointKeyInAndPointTypeIn(any(), any());
+        then(ledgers).should(never()).existsByReferencePointKeyAndPointType(any(), any());
+        then(ledgers).should(never()).sumAmountByReferencePointKeyAndPointType(any(), any());
     }
 
     @Test

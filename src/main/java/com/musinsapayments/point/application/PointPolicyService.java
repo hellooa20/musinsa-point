@@ -44,10 +44,9 @@ public class PointPolicyService {
         OffsetDateTime now = OffsetDateTime.ofInstant(clock.instant(), properties.zoneId());
         // 고객 정책 없다면 생성
         if (locked.isEmpty()) {
-            CustomerPointPolicy created = CustomerPointPolicy.create(
+            policies.upsertForInitialCreation(
                     command.customerId(), command.holdingLimit(), now);
-            policies.save(created);
-            return new PointPolicyResult(created.getCustomerId(), created.getHoldingLimit());
+            return new PointPolicyResult(command.customerId(), command.holdingLimit());
         }
 
         // 정책 변경 시 잔액 검증 -> 변경 처리

@@ -95,6 +95,8 @@ public class PointUseCancellationService {
         // 원 거래(사용) 건의 상세 조회
         List<PointCancellationAllocation> allocations =
                 allocateCancellation(originalUse, command.amount());
+        Map<String, PointLedger> sourceAccruals =
+                findSourceAccruals(allocations, command.customerId());
 
         // 사용 취소 처리 (원장)
         String cancellationPointKey = keys.generate();
@@ -105,7 +107,6 @@ public class PointUseCancellationService {
         ledgers.save(cancellation);
 
         // 사용 취소 처리 (원장 상세)
-        Map<String, PointLedger> sourceAccruals = findSourceAccruals(allocations);
         List<PointLedgerDetail> newDetails = restorePoints(
                 command.customerId(), cancellationPointKey, balanceAfter,
                 allocations, sourceAccruals, now);
@@ -158,12 +159,16 @@ public class PointUseCancellationService {
             PointLedger originalUse, long amount) {
         List<PointLedgerDetail> originalDetails =
                 details.findByPointKeyOrderBySequenceNoAsc(originalUse.getPointKey());
+        Map<String, Long> canceledBySource =
+                toCanceledMap(details.sumCanceledAmountBySource(originalUse.getPointKey()));
+        long canceledLedgerAmount = ledgers.sumAmountByReferencePointKeyAndPointType(
+                originalUse.getPointKey(), PointType.USE_CANCEL);
+        validateCancellationHistory(
+                originalUse, originalDetails, canceledBySource, canceledLedgerAmount, amount);
         try {
             // 원장 상세 건별 취소 금액 할당 처리
             return cancellationAllocator.allocate(
-                    originalDetails,
-                    toCanceledMap(details.sumCanceledAmountBySource(originalUse.getPointKey())),
-                    amount);
+                    originalDetails, canceledBySource, amount);
         } catch (IllegalStateException exception) {
             throw new PointException(PointErrorCode.USE_CANCEL_AMOUNT_EXCEEDED);
         } catch (IllegalArgumentException exception) {
@@ -174,10 +179,11 @@ public class PointUseCancellationService {
     /**
      * 취소 배분에 포함된 원적립 원장을 조회하고 유효성을 검증
      * @param allocations 원적립별 취소 배분 결과
+     * @param customerId 고객 ID
      * @return pointKey를 기준으로 조회한 원적립 원장
      */
     private Map<String, PointLedger> findSourceAccruals(
-            List<PointCancellationAllocation> allocations) {
+            List<PointCancellationAllocation> allocations, long customerId) {
         Set<String> sourceKeys = allocations.stream()
                 .map(PointCancellationAllocation::sourceAccrualPointKey)
                 .collect(Collectors.toSet());
@@ -185,7 +191,7 @@ public class PointUseCancellationService {
         Map<String, PointLedger> sourceAccruals = ledgers.findAllByPointKeyIn(sourceKeys).stream()
                 .collect(Collectors.toMap(PointLedger::getPointKey, Function.identity()));
 
-        validateSources(allocations, sourceAccruals);
+        validateSources(allocations, sourceAccruals, customerId);
         return sourceAccruals;
     }
 
@@ -238,14 +244,53 @@ public class PointUseCancellationService {
      * 취소 대상 source가 모두 존재하는 적립 원장인지 검증
      * @param allocations 원적립별 취소 배분 결과
      * @param sourceAccruals pointKey별 원적립 원장
+     * @param customerId 고객 ID
      */
     private void validateSources(
-            List<PointCancellationAllocation> allocations, Map<String, PointLedger> sourceAccruals) {
+            List<PointCancellationAllocation> allocations,
+            Map<String, PointLedger> sourceAccruals, long customerId) {
         for (PointCancellationAllocation allocation : allocations) {
             PointLedger source = sourceAccruals.get(allocation.sourceAccrualPointKey());
-            if (source == null || source.getPointType() != PointType.ACCRUAL) {
+            if (source == null || source.getPointType() != PointType.ACCRUAL
+                    || source.getCustomerId() != customerId) {
                 throw new PointException(PointErrorCode.DATA_INTEGRITY_VIOLATION);
             }
+        }
+    }
+
+    /**
+     * 원사용·취소 원장과 상세 금액이 서로 일치하고 추가 취소 가능한지 검증
+     * @param originalUse 원사용 원장
+     * @param originalDetails 원사용 상세
+     * @param canceledBySource source별 누적 취소 금액
+     * @param canceledLedgerAmount 사용 취소 원장 누적 금액
+     * @param requestedAmount 취소 요청 금액
+     */
+    private void validateCancellationHistory(
+            PointLedger originalUse, List<PointLedgerDetail> originalDetails,
+            Map<String, Long> canceledBySource, long canceledLedgerAmount,
+            long requestedAmount) {
+        long originalDetailAmount;
+        long canceledDetailAmount;
+        try {
+            originalDetailAmount = originalDetails.stream()
+                    .mapToLong(PointLedgerDetail::getAmount)
+                    .reduce(0L, Math::addExact);
+            canceledDetailAmount = canceledBySource.values().stream()
+                    .mapToLong(Long::longValue)
+                    .reduce(0L, Math::addExact);
+        } catch (ArithmeticException exception) {
+            throw new PointException(PointErrorCode.DATA_INTEGRITY_VIOLATION);
+        }
+
+        if (originalDetailAmount != originalUse.getAmount()
+                || canceledDetailAmount != canceledLedgerAmount
+                || canceledLedgerAmount < 0
+                || canceledLedgerAmount > originalUse.getAmount()) {
+            throw new PointException(PointErrorCode.DATA_INTEGRITY_VIOLATION);
+        }
+        if (requestedAmount > originalUse.getAmount() - canceledLedgerAmount) {
+            throw new PointException(PointErrorCode.USE_CANCEL_AMOUNT_EXCEEDED);
         }
     }
 

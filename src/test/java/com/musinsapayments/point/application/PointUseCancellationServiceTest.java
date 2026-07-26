@@ -154,6 +154,57 @@ class PointUseCancellationServiceTest {
     }
 
     @Test
+    void 원사용금액과_사용상세_합계가_다르면_무결성_오류다() {
+        PointLedger use = PointTestFixture.use("C", 100L);
+        PointLedger source = accrual("A", AccrualTransactionType.NORMAL, 200L, 0L, NOW.plusDays(1));
+        prepare(10_000L, 0L, use, List.of(detail("C", "A", 200L, 1)),
+                List.of(), List.of(source));
+
+        assertThatThrownBy(() -> service.cancel(command("C", "CANCEL-1", 100L)))
+                .isInstanceOf(PointException.class)
+                .extracting("errorCode").isEqualTo(PointErrorCode.DATA_INTEGRITY_VIOLATION);
+
+        assertThat(source.getRemainingAmount()).isZero();
+        then(ledgers).should(never()).save(any());
+        then(details).should(never()).saveAll(any());
+    }
+
+    @Test
+    void 취소원장과_취소상세_누적금액이_다르면_무결성_오류다() {
+        PointLedger use = PointTestFixture.use("C", 100L);
+        PointLedger source = accrual("A", AccrualTransactionType.NORMAL, 100L, 0L, NOW.plusDays(1));
+        prepare(10_000L, 0L, use, List.of(detail("C", "A", 100L, 1)),
+                List.of(), List.of(source));
+        given(ledgers.sumAmountByReferencePointKeyAndPointType("C", PointType.USE_CANCEL))
+                .willReturn(100L);
+
+        assertThatThrownBy(() -> service.cancel(command("C", "CANCEL-2", 1L)))
+                .isInstanceOf(PointException.class)
+                .extracting("errorCode").isEqualTo(PointErrorCode.DATA_INTEGRITY_VIOLATION);
+
+        assertThat(source.getRemainingAmount()).isZero();
+        then(ledgers).should(never()).save(any());
+        then(details).should(never()).saveAll(any());
+    }
+
+    @Test
+    void 다른_고객의_적립이_source면_무결성_오류다() {
+        PointLedger use = PointTestFixture.use("C", 100L);
+        PointLedger otherCustomerSource = accrual(
+                200L, "A", AccrualTransactionType.NORMAL, 100L, 0L, NOW.plusDays(1));
+        prepare(10_000L, 0L, use, List.of(detail("C", "A", 100L, 1)),
+                List.of(), List.of(otherCustomerSource));
+
+        assertThatThrownBy(() -> service.cancel(command("C", "CANCEL-1", 100L)))
+                .isInstanceOf(PointException.class)
+                .extracting("errorCode").isEqualTo(PointErrorCode.DATA_INTEGRITY_VIOLATION);
+
+        assertThat(otherCustomerSource.getRemainingAmount()).isZero();
+        then(ledgers).should(never()).save(any());
+        then(details).should(never()).saveAll(any());
+    }
+
+    @Test
     void 손상된_누적_취소_집계는_무결성_오류이고_저장이나_복원이_없다() {
         PointLedger use = PointTestFixture.use("C", 100L);
         PointLedger source = accrual("A", AccrualTransactionType.NORMAL, 100L, 0L, NOW.plusDays(1));
@@ -254,7 +305,6 @@ class PointUseCancellationServiceTest {
         PointLedger liveA = accrual("A", AccrualTransactionType.NORMAL, 300L, 0L, NOW.plusDays(1));
         prepare(10_000L, 0L, use, List.of(detail("C", "A", 300L, 1), detail("C", "B", 300L, 2)),
                 List.of(), List.of(liveA));
-        given(keys.generate()).willReturn("D");
 
         assertThatThrownBy(() -> service.cancel(command("C", "CANCEL-1", 600L)))
                 .isInstanceOf(PointException.class)
@@ -270,7 +320,6 @@ class PointUseCancellationServiceTest {
         PointLedger nonAccrualSource = PointTestFixture.use("X", 100L);
         prepare(10_000L, 0L, use, List.of(detail("C", "X", 100L, 1)),
                 List.of(), List.of(nonAccrualSource));
-        given(keys.generate()).willReturn("D");
 
         assertThatThrownBy(() -> service.cancel(command("C", "CANCEL-1", 100L)))
                 .isInstanceOf(PointException.class)
@@ -319,6 +368,9 @@ class PointUseCancellationServiceTest {
                 .thenReturn(originalDetails);
         org.mockito.Mockito.lenient().when(details.sumCanceledAmountBySource("C"))
                 .thenReturn(canceledRows);
+        org.mockito.Mockito.lenient().when(ledgers.sumAmountByReferencePointKeyAndPointType(
+                        "C", PointType.USE_CANCEL))
+                .thenReturn(sumCanceledRows(canceledRows));
         org.mockito.Mockito.lenient().when(ledgers.findAllByPointKeyIn(any())).thenReturn(sources);
     }
 
@@ -334,7 +386,15 @@ class PointUseCancellationServiceTest {
     private PointLedger accrual(
             String pointKey, AccrualTransactionType type, long amount,
             long remainingAmount, OffsetDateTime expiresAt) {
-        PointLedger ledger = PointTestFixture.accrual(pointKey, type, amount, amount, expiresAt);
+        return accrual(CUSTOMER_ID, pointKey, type, amount, remainingAmount, expiresAt);
+    }
+
+    private PointLedger accrual(
+            long customerId, String pointKey, AccrualTransactionType type, long amount,
+            long remainingAmount, OffsetDateTime expiresAt) {
+        PointLedger ledger = PointLedger.createAccrual(
+                customerId, pointKey, UUID.randomUUID().toString(), type, null,
+                amount, amount, expiresAt, NOW, NOW.toLocalDate());
         if (remainingAmount < amount) {
             ledger.consume(amount - remainingAmount, expiresAt.minusNanos(1));
         }
@@ -347,6 +407,12 @@ class PointUseCancellationServiceTest {
 
     private List<Object[]> canceled(String sourceKey, long amount) {
         return List.<Object[]>of(new Object[] {sourceKey, amount});
+    }
+
+    private long sumCanceledRows(List<Object[]> rows) {
+        return rows.stream()
+                .mapToLong(row -> ((Number) row[1]).longValue())
+                .sum();
     }
 
     private PointMutationResult result(String pointKey, long amount, long balanceAfter) {
